@@ -1604,7 +1604,7 @@ function defineCard() {
   window.customCards = window.customCards || [];
   window.customCards.push({
     type: 'mowbite-card',
-    name: 'MowBite',
+    name: 'MowBite for OpenMower',
     description: 'Your OpenMower the way the MowBite app shows it',
     preview: true,
     documentationURL: 'https://github.com/mkaaaaaay/mowbite-ha',

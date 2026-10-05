@@ -1,6 +1,6 @@
 {
   "domain": "mowbite",
-  "name": "MowBite",
+  "name": "MowBite for OpenMower",
   "codeowners": ["@mkaaaaaay"],
   "config_flow": true,
   "dependencies": ["frontend", "http", "lovelace", "websocket_api"],
@@ -10,5 +10,5 @@
   "issue_tracker": "https://github.com/mkaaaaaay/mowbite-ha/issues",
   "loggers": ["aiomqtt"],
   "requirements": ["aiomqtt>=2.5.0"],
-  "version": "0.1.0"
+  "version": "0.1.1"
 }
