@@ -1,0 +1,187 @@
+{
+  "config": {
+    "abort": {
+      "already_configured": "This mower is already set up.",
+      "reconfigure_successful": "The mower was moved to the new settings."
+    },
+    "error": {
+      "cannot_connect": "Can't reach an MQTT broker there.",
+      "invalid_auth": "The broker turned down the username or password.",
+      "no_mower": "The broker answers, but no OpenMower publishes behind that prefix (nothing on robot_state/json within 15 s). Check the prefix and that OpenMower is running.",
+      "unknown": "Unexpected error, see the log."
+    },
+    "step": {
+      "reconfigure": {
+        "data": {
+          "host": "Broker host",
+          "password": "Password",
+          "port": "Port",
+          "prefix": "Topic prefix",
+          "username": "Username"
+        },
+        "data_description": {
+          "host": "Usually the mower itself, e.g. 192.168.1.50 or openmower.local.",
+          "prefix": "Only if OpenMower publishes behind a prefix, e.g. openmower/. Empty on the mower's own broker."
+        },
+        "title": "Change the connection"
+      },
+      "user": {
+        "data": {
+          "host": "Broker host",
+          "password": "Password",
+          "port": "Port",
+          "prefix": "Topic prefix",
+          "username": "Username"
+        },
+        "data_description": {
+          "host": "Usually the mower itself, e.g. 192.168.1.50 or openmower.local.",
+          "prefix": "Only if OpenMower publishes behind a prefix, e.g. openmower/. Empty on the mower's own broker."
+        },
+        "description": "The MQTT broker your OpenMower publishes to. MowBite talks to the mower directly, Home Assistant's own MQTT integration isn't needed."
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "emergency": {
+        "name": "Emergency stop"
+      },
+      "rain": {
+        "name": "Rain"
+      }
+    },
+    "button": {
+      "reset_emergency": {
+        "name": "Reset emergency stop"
+      },
+      "skip_area": {
+        "name": "Skip area"
+      },
+      "snooze_hour": {
+        "name": "Pause notifications for 1 h"
+      },
+      "snooze_morning": {
+        "name": "Pause notifications until tomorrow morning"
+      }
+    },
+    "event": {
+      "events": {
+        "name": "Events",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "area_skipped": "Area skipped",
+              "area_started": "Area started",
+              "booted": "Mower started",
+              "docked": "Docked",
+              "docking_failed": "Docking failed",
+              "docking_retry": "Docking retry",
+              "emergency": "Emergency stop",
+              "emergency_cleared": "Emergency cleared",
+              "fully_charged": "Fully charged",
+              "gps_lost": "GPS lost",
+              "heading_home": "Heading home",
+              "job_complete": "All areas done",
+              "job_reset": "Job dropped",
+              "mow_motor_spinup_failed": "Mow motor didn't start",
+              "navigation_error": "Navigation error",
+              "shutdown": "Shut down",
+              "undocked": "Left the dock",
+              "undocking_failed": "Leaving the dock failed"
+            }
+          }
+        }
+      }
+    },
+    "sensor": {
+      "battery_voltage": {
+        "name": "Battery voltage"
+      },
+      "charge_current": {
+        "name": "Charge current"
+      },
+      "charge_voltage": {
+        "name": "Charge voltage"
+      },
+      "gps_quality": {
+        "name": "GPS quality"
+      },
+      "left_esc_temperature": {
+        "name": "Left motor controller temperature"
+      },
+      "mow_esc_temperature": {
+        "name": "Mow motor controller temperature"
+      },
+      "mow_motor_current": {
+        "name": "Mow motor current"
+      },
+      "mow_motor_speed": {
+        "name": "Mow motor speed"
+      },
+      "mow_motor_temperature": {
+        "name": "Mow motor temperature"
+      },
+      "notifications_paused_until": {
+        "name": "Notifications paused until"
+      },
+      "position_accuracy": {
+        "name": "Position accuracy"
+      },
+      "right_esc_temperature": {
+        "name": "Right motor controller temperature"
+      },
+      "state": {
+        "name": "State",
+        "state": {
+          "area_recording": "Recording an area",
+          "docking": "Heading home",
+          "idle": "Idle",
+          "mowing": "Mowing",
+          "paused": "Paused",
+          "undocking": "Leaving the dock"
+        }
+      }
+    },
+    "switch": {
+      "notifications": {
+        "name": "Notifications"
+      }
+    }
+  },
+  "exceptions": {
+    "action_unavailable": {
+      "message": "The mower doesn't take that right now."
+    },
+    "not_connected": {
+      "message": "Not connected to the mower."
+    }
+  },
+  "options": {
+    "error": {
+      "cannot_reach_app": "No MowBite answers at that address."
+    },
+    "step": {
+      "init": {
+        "data": {
+          "app_url": "MowBite address",
+          "map": "Show the map"
+        },
+        "data_description": {
+          "app_url": "Where the MowBite app runs, e.g. http://openmower:8080. The map then has the colours and symbols set in the app. Empty: the app's defaults.",
+          "map": "When the MowBite card shows the map, unless a card is set otherwise."
+        },
+        "title": "Map like in MowBite"
+      }
+    }
+  },
+  "selector": {
+    "map_mode": {
+      "options": {
+        "app": "As set in the MowBite app",
+        "auto": "Only while the mower drives",
+        "always": "Always",
+        "never": "Never"
+      }
+    }
+  }
+}

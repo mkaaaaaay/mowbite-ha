@@ -1,0 +1,126 @@
+blueprint:
+  name: MowBite notifications
+  description: >-
+    Sends the mower's events to a phone with the Home Assistant app. The message comes from the
+    integration in the language Home Assistant is set to, the same wording the MowBite app uses.
+  domain: automation
+  source_url: https://github.com/mkaaaaaay/mowbite-ha/blob/main/blueprints/automation/mowbite/notify.yaml
+  input:
+    events:
+      name: Mower
+      description: The mower's events entity.
+      selector:
+        entity:
+          filter:
+            - integration: mowbite
+              domain: event
+    phone:
+      name: Phone
+      selector:
+        device:
+          filter:
+            - integration: mobile_app
+    event_types:
+      name: Notify about
+      default:
+        - emergency
+        - docking_failed
+        - undocking_failed
+        - navigation_error
+        - mow_motor_spinup_failed
+        - job_complete
+      selector:
+        select:
+          multiple: true
+          options:
+            - label: Emergency stop
+              value: emergency
+            - label: Docking failed
+              value: docking_failed
+            - label: Leaving the dock failed
+              value: undocking_failed
+            - label: Navigation error
+              value: navigation_error
+            - label: Mow motor didn't start
+              value: mow_motor_spinup_failed
+            - label: GPS lost while mowing
+              value: gps_lost
+            - label: Docking retry
+              value: docking_retry
+            - label: All areas done
+              value: job_complete
+            - label: Heading home (battery, rain, mow motor hot, paused)
+              value: heading_home
+            - label: Docked
+              value: docked
+            - label: Left the dock
+              value: undocked
+            - label: Area started
+              value: area_started
+            - label: Area skipped
+              value: area_skipped
+            - label: Fully charged
+              value: fully_charged
+            - label: Emergency cleared
+              value: emergency_cleared
+            - label: Job dropped
+              value: job_reset
+            - label: Mower started
+              value: booted
+            - label: Shut down
+              value: shutdown
+    skip_paused:
+      name: Not when I paused it
+      description: Leaves out "heading home" when you sent the mower home yourself.
+      default: true
+      selector:
+        boolean:
+    snooze_buttons:
+      name: Snooze buttons
+      description: >-
+        Adds "1 h" and "until tomorrow morning" to each notification. Pressing one pauses the mower's
+        notifications, the integration's "Notifications" switch shows it and turns them back on.
+      default: true
+      selector:
+        boolean:
+
+mode: queued
+max: 10
+
+variables:
+  event_types: !input event_types
+  skip_paused: !input skip_paused
+  snooze_buttons: !input snooze_buttons
+
+triggers:
+  # not_from: an event entity coming back after a restart or a lost connection isn't a new event
+  - trigger: state
+    entity_id: !input events
+    not_from:
+      - unavailable
+    not_to:
+      - unavailable
+      - unknown
+
+conditions:
+  - condition: template
+    value_template: >-
+      {% set event = trigger.to_state.attributes %}
+      {{ event.event_type in event_types
+         and not event.get('snoozed', false)
+         and not (skip_paused and event.get('reason') == 'paused') }}
+
+actions:
+  - domain: mobile_app
+    type: notify
+    device_id: !input phone
+    title: "{{ device_attr(device_id(trigger.entity_id), 'name_by_user') or device_attr(device_id(trigger.entity_id), 'name') }}"
+    message: "{{ trigger.to_state.attributes.message }}"
+    data:
+      group: mowbite
+      actions: "{{ trigger.to_state.attributes.get('notification_actions', []) if snooze_buttons else [] }}"
+      # problems get through focus modes and doze, the rest stays quiet
+      push:
+        interruption-level: "{{ 'time-sensitive' if trigger.to_state.attributes.severity == 'error' else 'active' }}"
+      priority: "{{ 'high' if trigger.to_state.attributes.severity == 'error' else 'normal' }}"
+      ttl: "{{ 0 if trigger.to_state.attributes.severity == 'error' else 3600 }}"

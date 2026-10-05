@@ -1,0 +1,187 @@
+{
+  "config": {
+    "abort": {
+      "already_configured": "Dieser Mäher ist schon eingerichtet.",
+      "reconfigure_successful": "Die neuen Verbindungsdaten gelten jetzt."
+    },
+    "error": {
+      "cannot_connect": "Dort ist kein MQTT-Broker erreichbar.",
+      "invalid_auth": "Der Broker hat Benutzername oder Passwort abgelehnt.",
+      "no_mower": "Der Broker antwortet, aber unter diesem Präfix meldet sich kein OpenMower (15 s nichts auf robot_state/json). Prüfe das Präfix und ob OpenMower läuft.",
+      "unknown": "Unerwarteter Fehler, siehe Log."
+    },
+    "step": {
+      "reconfigure": {
+        "data": {
+          "host": "Broker-Adresse",
+          "password": "Passwort",
+          "port": "Port",
+          "prefix": "Topic-Präfix",
+          "username": "Benutzername"
+        },
+        "data_description": {
+          "host": "Meist der Mäher selbst, z. B. 192.168.1.50 oder openmower.local.",
+          "prefix": "Nur wenn OpenMower unter einem Präfix sendet, z. B. openmower/. Auf dem Broker des Mähers leer lassen."
+        },
+        "title": "Verbindung ändern"
+      },
+      "user": {
+        "data": {
+          "host": "Broker-Adresse",
+          "password": "Passwort",
+          "port": "Port",
+          "prefix": "Topic-Präfix",
+          "username": "Benutzername"
+        },
+        "data_description": {
+          "host": "Meist der Mäher selbst, z. B. 192.168.1.50 oder openmower.local.",
+          "prefix": "Nur wenn OpenMower unter einem Präfix sendet, z. B. openmower/. Auf dem Broker des Mähers leer lassen."
+        },
+        "description": "Der MQTT-Broker, an den dein OpenMower sendet. MowBite spricht direkt mit dem Mäher, die MQTT-Integration von Home Assistant brauchst du dafür nicht."
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "emergency": {
+        "name": "Notaus"
+      },
+      "rain": {
+        "name": "Regen"
+      }
+    },
+    "button": {
+      "reset_emergency": {
+        "name": "Notaus zurücksetzen"
+      },
+      "skip_area": {
+        "name": "Fläche überspringen"
+      },
+      "snooze_hour": {
+        "name": "Benachrichtigungen 1 h pausieren"
+      },
+      "snooze_morning": {
+        "name": "Benachrichtigungen bis morgen früh pausieren"
+      }
+    },
+    "event": {
+      "events": {
+        "name": "Ereignisse",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "area_skipped": "Fläche übersprungen",
+              "area_started": "Fläche begonnen",
+              "booted": "Mäher gestartet",
+              "docked": "Angedockt",
+              "docking_failed": "Andocken fehlgeschlagen",
+              "docking_retry": "Andock-Versuch",
+              "emergency": "Notaus",
+              "emergency_cleared": "Notaus aufgehoben",
+              "fully_charged": "Voll geladen",
+              "gps_lost": "GPS verloren",
+              "heading_home": "Fährt nach Hause",
+              "job_complete": "Alle Flächen fertig",
+              "job_reset": "Job verworfen",
+              "mow_motor_spinup_failed": "Mähmotor lief nicht an",
+              "navigation_error": "Navigationsfehler",
+              "shutdown": "Heruntergefahren",
+              "undocked": "Dock verlassen",
+              "undocking_failed": "Abdocken fehlgeschlagen"
+            }
+          }
+        }
+      }
+    },
+    "sensor": {
+      "battery_voltage": {
+        "name": "Akkuspannung"
+      },
+      "charge_current": {
+        "name": "Ladestrom"
+      },
+      "charge_voltage": {
+        "name": "Ladespannung"
+      },
+      "gps_quality": {
+        "name": "GPS-Qualität"
+      },
+      "left_esc_temperature": {
+        "name": "Temperatur Motorregler links"
+      },
+      "mow_esc_temperature": {
+        "name": "Temperatur Motorregler Mähmotor"
+      },
+      "mow_motor_current": {
+        "name": "Strom Mähmotor"
+      },
+      "mow_motor_speed": {
+        "name": "Drehzahl Mähmotor"
+      },
+      "mow_motor_temperature": {
+        "name": "Temperatur Mähmotor"
+      },
+      "notifications_paused_until": {
+        "name": "Benachrichtigungen pausiert bis"
+      },
+      "position_accuracy": {
+        "name": "Positionsgenauigkeit"
+      },
+      "right_esc_temperature": {
+        "name": "Temperatur Motorregler rechts"
+      },
+      "state": {
+        "name": "Zustand",
+        "state": {
+          "area_recording": "Nimmt eine Fläche auf",
+          "docking": "Fährt nach Hause",
+          "idle": "Bereit",
+          "mowing": "Mäht",
+          "paused": "Pausiert",
+          "undocking": "Verlässt das Dock"
+        }
+      }
+    },
+    "switch": {
+      "notifications": {
+        "name": "Benachrichtigungen"
+      }
+    }
+  },
+  "exceptions": {
+    "action_unavailable": {
+      "message": "Das nimmt der Mäher gerade nicht an."
+    },
+    "not_connected": {
+      "message": "Keine Verbindung zum Mäher."
+    }
+  },
+  "options": {
+    "error": {
+      "cannot_reach_app": "Unter dieser Adresse antwortet kein MowBite."
+    },
+    "step": {
+      "init": {
+        "data": {
+          "app_url": "MowBite-Adresse",
+          "map": "Karte anzeigen"
+        },
+        "data_description": {
+          "app_url": "Wo die MowBite-App läuft, z. B. http://openmower:8080. Die Karte bekommt dann die Farben und Symbole aus der App. Leer: die Standardwerte der App.",
+          "map": "Wann die MowBite-Karte die Karte zeigt, sofern an einer Karte nichts anderes eingestellt ist."
+        },
+        "title": "Karte wie in MowBite"
+      }
+    }
+  },
+  "selector": {
+    "map_mode": {
+      "options": {
+        "app": "Wie in der MowBite-App eingestellt",
+        "auto": "Nur wenn der Mäher fährt",
+        "always": "Immer",
+        "never": "Nie"
+      }
+    }
+  }
+}

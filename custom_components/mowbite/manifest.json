@@ -1,0 +1,14 @@
+{
+  "domain": "mowbite",
+  "name": "MowBite",
+  "codeowners": ["@mkaaaaaay"],
+  "config_flow": true,
+  "dependencies": ["frontend", "http", "lovelace", "websocket_api"],
+  "documentation": "https://github.com/mkaaaaaay/mowbite-ha",
+  "integration_type": "device",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/mkaaaaaay/mowbite-ha/issues",
+  "loggers": ["aiomqtt"],
+  "requirements": ["aiomqtt>=2.5.0"],
+  "version": "0.1.0"
+}

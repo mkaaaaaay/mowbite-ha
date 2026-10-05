@@ -1,0 +1,55 @@
+{
+  "entity": {
+    "button": {
+      "reset_emergency": {
+        "default": "mdi:alert-octagon-outline"
+      },
+      "skip_area": {
+        "default": "mdi:skip-next"
+      },
+      "snooze_hour": {
+        "default": "mdi:bell-sleep"
+      },
+      "snooze_morning": {
+        "default": "mdi:bell-sleep-outline"
+      }
+    },
+    "event": {
+      "events": {
+        "default": "mdi:robot-mower-outline"
+      }
+    },
+    "sensor": {
+      "gps_quality": {
+        "default": "mdi:crosshairs-gps"
+      },
+      "mow_motor_speed": {
+        "default": "mdi:saw-blade"
+      },
+      "notifications_paused_until": {
+        "default": "mdi:bell-sleep-outline"
+      },
+      "position_accuracy": {
+        "default": "mdi:map-marker-radius"
+      },
+      "state": {
+        "default": "mdi:robot-mower",
+        "state": {
+          "area_recording": "mdi:vector-polygon",
+          "docking": "mdi:home-import-outline",
+          "idle": "mdi:home-outline",
+          "paused": "mdi:pause-circle-outline",
+          "undocking": "mdi:home-export-outline"
+        }
+      }
+    },
+    "switch": {
+      "notifications": {
+        "default": "mdi:bell-ring",
+        "state": {
+          "off": "mdi:bell-off"
+        }
+      }
+    }
+  }
+}
