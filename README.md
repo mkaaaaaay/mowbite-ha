@@ -4,8 +4,6 @@ A Home Assistant integration that brings an [OpenMower](https://github.com/Cleme
 into Home Assistant, with the map and the look of [MowBite](https://github.com/mkaaaaaay/mowbite). It talks to the
 mower's MQTT broker directly, no cloud and no extra add-on.
 
-MowBite is a community project and not affiliated with the OpenMower project.
-
 ![The MowBite card in Home Assistant](images/card.png)
 
 ## What it does
