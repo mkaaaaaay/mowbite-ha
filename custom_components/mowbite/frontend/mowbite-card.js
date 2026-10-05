@@ -498,6 +498,8 @@ const MAP_COLORS = {
   unmowed: '#ffb300',
   nav: '#29b6f6',
   obstacle: '#ef5350',
+  body: '#ff1fa3',
+  swath: '#ffffff',
 };
 
 // half the mower's length, m, when the app draws it at its real size
@@ -737,6 +739,54 @@ const MAP_STYLE = `
     stroke-dasharray: 4 4;
   }
 
+  /* the strip the blade cut, as wide as the blade on the map */
+  .swath path {
+    vector-effect: none;
+    fill: none;
+    stroke: var(--c-swath);
+    stroke-opacity: 0.22;
+    stroke-linecap: butt;
+    stroke-linejoin: round;
+  }
+
+  .swath path.swathEnd {
+    fill: var(--c-swath);
+    fill-opacity: 0.22;
+    stroke: none;
+  }
+
+  .mowerBody {
+    fill: var(--c-body);
+    fill-opacity: 0.12;
+    stroke: var(--c-body);
+    stroke-opacity: 0.85;
+    stroke-width: 1.25;
+    stroke-linejoin: round;
+  }
+
+  .mowerBlade {
+    fill: none;
+    stroke: var(--c-swath);
+    stroke-opacity: 0.85;
+    stroke-width: 1;
+    stroke-dasharray: 3 2;
+  }
+
+  .mowerBlade.on {
+    fill: var(--c-swath);
+    fill-opacity: 0.2;
+    stroke-dasharray: none;
+  }
+
+  .mowerBladeBar {
+    fill: var(--c-swath);
+    fill-opacity: 0.6;
+  }
+
+  .mowerAxle {
+    fill: var(--c-body);
+  }
+
   .zoomButtons {
     position: absolute;
     top: 10px;
@@ -779,6 +829,135 @@ const MAP_STYLE = `
   }
 `;
 
+// The mower's body and blade from its sizes, in metres: a rectangle around the point OpenMower follows (the middle
+// between the rear drive wheels), front ahead of it, rear behind, width wide, and the blade bladeAhead ahead of it and
+// bladeOffset to the left. Nothing without them
+const MAX_BLADE = 0.4;
+function bodyFrom(s) {
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  const width = num(s?.width);
+  const front = num(s?.front);
+  const rear = num(s?.rear);
+  if (width === null || front === null || rear === null || width <= 0 || front + rear <= 0) return null;
+  const blade = num(s?.blade) ?? 0;
+  return {
+    width,
+    front,
+    rear,
+    blade: blade > 0 && blade <= MAX_BLADE ? blade : 0,
+    bladeAhead: num(s?.bladeAhead) ?? 0,
+    bladeOffset: num(s?.bladeOffset) ?? 0,
+  };
+}
+
+// the corners of the body and the blade's centre in the map, for the mower at x, y facing heading (rad, ccw)
+function bodyShape(b, x, y, heading) {
+  const c = Math.cos(heading);
+  const s = Math.sin(heading);
+  const at = (ahead, left) => ({x: x + c * ahead - s * left, y: y + s * ahead + c * left});
+  return {
+    corners: [at(b.front, b.width / 2), at(-b.rear, b.width / 2), at(-b.rear, -b.width / 2), at(b.front, -b.width / 2)],
+    blade: at(b.bladeAhead, b.bladeOffset),
+    middle: at((b.front - b.rear) / 2, 0),
+  };
+}
+
+// shorter steps of the track don't say which way the mower drove
+const MIN_STEP = 0.05;
+// the heading is taken over this much track, gps wobble on short steps would swing the blade about
+const SMOOTH = 0.25;
+// a step turning further than this is a turn on the spot: the blade swings round it, drawn in steps of 15°
+const SPIN = Math.PI / 3;
+const SWING_STEP = Math.PI / 12;
+// a piece of the strip ends where the heading turned this far from where it began
+const PIECE_TURN = Math.PI / 4;
+const turned = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
+const towards = (a, b) => Math.atan2(b.y - a.y, b.x - a.x);
+
+// The strip the blade cut along a stretch of track driven with the blades on, worked out point by point as the track
+// grows: the blade's centre, ahead of and beside the point the track follows, with the heading taken from the way it
+// drove (it mows forwards). In pieces, one per lane and per bit of a turn, so drawn see-through the strip shows darker
+// where lanes overlap. Each piece begins where the one before ended
+class SwathScan {
+  constructor(b) {
+    this.b = b;
+    // the finished pieces, they don't change any more, and the one still growing
+    this.pieces = [];
+    this.piece = [];
+    this.start = 0;
+    this.heading = null;
+    // the track since the last turn on the spot
+    this.run = [];
+    this.from = null;
+  }
+
+  blade(p, h) {
+    const b = this.b;
+    return {
+      x: p.x + Math.cos(h) * b.bladeAhead - Math.sin(h) * b.bladeOffset,
+      y: p.y + Math.sin(h) * b.bladeAhead + Math.cos(h) * b.bladeOffset,
+    };
+  }
+
+  add(p, h) {
+    if (this.piece.length > 1 && Math.abs(turned(h, this.start)) > PIECE_TURN) {
+      this.pieces.push(this.piece);
+      this.piece = [this.piece[this.piece.length - 1]];
+    }
+    if (this.piece.length < 2) this.start = h;
+    this.piece.push(p);
+  }
+
+  push(to) {
+    const from = this.from;
+    if (!from) {
+      this.from = to;
+      return;
+    }
+    if (Math.hypot(to.x - from.x, to.y - from.y) < MIN_STEP) return;
+    const step = towards(from, to);
+    if (this.heading === null) {
+      this.add(this.blade(from, step), step);
+      this.run = [from];
+    } else if (Math.abs(turned(step, this.heading)) > SPIN) {
+      const d = turned(step, this.heading);
+      const steps = Math.ceil(Math.abs(d) / SWING_STEP);
+      for (let n = 1; n <= steps; n++) {
+        const h = this.heading + (d * n) / steps;
+        this.add(this.blade(from, h), h);
+      }
+      this.run = [from];
+    }
+    const run = this.run;
+    run.push(to);
+    let back = run.length - 2;
+    while (back > 0 && Math.hypot(to.x - run[back].x, to.y - run[back].y) < SMOOTH) back--;
+    this.heading = towards(run[back], to);
+    this.add(this.blade(to, this.heading), this.heading);
+    this.from = to;
+  }
+}
+
+// the half of the blade's circle beyond the end of a piece (at end, coming from from): where it started or stopped
+// mowing the strip is round
+function swathEnd(from, end, r) {
+  const len = Math.hypot(end.x - from.x, end.y - from.y) || 1;
+  const d = {x: (end.x - from.x) / len, y: (end.y - from.y) / len};
+  return Array.from({length: 9}, (_, i) => {
+    const a = -Math.PI / 2 + (Math.PI * i) / 8;
+    return {x: end.x + r * (d.x * Math.cos(a) - d.y * Math.sin(a)), y: end.y + r * (d.x * Math.sin(a) + d.y * Math.cos(a))};
+  });
+}
+
+// seconds for one turn of a drawn blade: 2.5 s at 2400 rpm (the real 40 a second would only blur), in half seconds so
+// a wobbling rpm doesn't keep restarting the animation
+function bladeSeconds(rpm) {
+  const s = Math.min(10, Math.max(0.8, 6000 / Math.abs(rpm || 1)));
+  return Math.max(1, Math.round(s * 2)) / 2;
+}
+
+const svgPath = (pts) => pts.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(3)} ${(-p.y).toFixed(3)}`).join('');
+
 const svgNS = 'http://www.w3.org/2000/svg';
 
 class MowbiteMap {
@@ -790,8 +969,11 @@ class MowbiteMap {
       <svg xmlns="${svgNS}" preserveAspectRatio="xMidYMid meet">
         <g class="areas"></g>
         <g class="docks"></g>
+        <g class="swath"></g>
         <g class="tracks"></g>
+        <g class="mowerBodyLayer"></g>
         <g class="mowerIcon"></g>
+        <g class="mowerTop"></g>
       </svg>
       <div class="zoomButtons">
         <button data-zoom="in" title="+">${MAP_BUTTONS.plus}</button>
@@ -803,7 +985,16 @@ class MowbiteMap {
     this.areas = section.querySelector('.areas');
     this.docks = section.querySelector('.docks');
     this.tracks = section.querySelector('.tracks');
+    this.swath = section.querySelector('.swath');
+    this.bodyLayer = section.querySelector('.mowerBodyLayer');
     this.mower = section.querySelector('.mowerIcon');
+    this.top = section.querySelector('.mowerTop');
+    this.body = null;
+    this.points = [];
+    // the stretch with the blades on the strip is still growing along: its scan and its growing piece and ends
+    this.stretch = null;
+    this.rpm = 0;
+    this.motion = true;
     this.map = null;
     this.icons = {};
     this.view = null; // {x, y, w, h} in svg units (x, -y)
@@ -894,7 +1085,10 @@ class MowbiteMap {
     if (update.reset) {
       this.tracks.innerHTML = '';
       this.runs = [];
+      this.points = [];
     }
+    const added = this.points.length;
+    for (const [x, y, blades] of update.points) this.points.push({x, y, b: !!blades});
     const touched = new Set();
     for (const [x, y, blades] of update.points) {
       let run = this.runs[this.runs.length - 1];
@@ -912,6 +1106,80 @@ class MowbiteMap {
       touched.add(run);
     }
     for (const run of touched) run.el.setAttribute('points', run.points.join(' '));
+    if (update.reset) this.drawSwath();
+    else this.growSwath(added);
+  }
+
+  // the mower's sizes, from the app or the integration, null without them
+  setBody(body) {
+    if (JSON.stringify(body) === JSON.stringify(this.body)) return;
+    this.body = body;
+    this.drawSwath();
+    this.drawDocks();
+    this.drawMower();
+  }
+
+  // how fast the mow motor turns, and whether the drawn blade may turn with it
+  setBlade(rpm, motion) {
+    this.rpm = rpm;
+    this.motion = motion;
+  }
+
+  // the strip anew, along the whole track
+  drawSwath() {
+    this.swath.innerHTML = '';
+    this.stretch = null;
+    if (this.body?.blade) this.swath.setAttribute('stroke-width', this.body.blade);
+    this.growSwath(0);
+  }
+
+  // the strip along the track's points from start on. a finished piece is added once, only the growing piece and the
+  // blade's round ends are drawn again
+  growSwath(start) {
+    const body = this.body;
+    if (!body?.blade) return;
+    for (let i = start; i < this.points.length; i++) {
+      const p = this.points[i];
+      if (!p.b) {
+        if (this.stretch) this.flushSwath();
+        this.stretch = null;
+        continue;
+      }
+      if (!this.stretch) {
+        const open = document.createElementNS(svgNS, 'path');
+        const ends = document.createElementNS(svgNS, 'path');
+        ends.setAttribute('class', 'swathEnd');
+        this.swath.append(open, ends);
+        this.stretch = {scan: new SwathScan(body), done: 0, open, ends};
+      }
+      this.stretch.scan.push(p);
+    }
+    if (this.stretch) this.flushSwath();
+  }
+
+  flushSwath() {
+    const stretch = this.stretch;
+    const {scan, open, ends} = stretch;
+    while (stretch.done < scan.pieces.length) {
+      const el = document.createElementNS(svgNS, 'path');
+      el.setAttribute('d', svgPath(scan.pieces[stretch.done++]));
+      this.swath.insertBefore(el, open);
+    }
+    const growing = scan.piece.length > 1 ? scan.piece : null;
+    if (growing) open.setAttribute('d', svgPath(growing));
+    else open.removeAttribute('d');
+    // where the blade started and where it is or stopped, the strip is round
+    const first = scan.pieces[0] ?? growing;
+    const last = growing ?? scan.pieces[scan.pieces.length - 1];
+    if (first && last) {
+      const r = this.body.blade / 2;
+      ends.setAttribute(
+        'd',
+        `${svgPath(swathEnd(first[1], first[0], r))}Z${svgPath(swathEnd(last[last.length - 2], last[last.length - 1], r))}Z`,
+      );
+    } else {
+      ends.removeAttribute('d');
+    }
   }
 
   setPose(pose, emergency) {
@@ -977,7 +1245,7 @@ class MowbiteMap {
           // a real station at its real size under the docked mower, its pins at the mower's front (as big as the
           // other icons at least)
           const {length, pins} = icon.real;
-          const ahead = 0.43 + pins - length / 2;
+          const ahead = (this.body?.front ?? 0.43) + pins - length / 2;
           const x = station.position.x + Math.cos(station.heading) * ahead;
           const y = station.position.y + Math.sin(station.heading) * ahead;
           const half = Math.max(length / 2, (ICON_PX * size) / k);
@@ -992,22 +1260,86 @@ class MowbiteMap {
     const pose = this.pose;
     if (!pose || !this.view) {
       this.mower.innerHTML = '';
+      this.bodyLayer.innerHTML = '';
+      this.drawBlade(null);
       return;
     }
     const k = this.k;
+    const body = this.body;
     const icon = MAP_MOWERS[this.icons.mower] ?? MAP_MOWERS.triangle;
-    // the same size on screen as the dock, or its real size (never smaller than a few pixels)
-    const base = this.icons.mowerRealSize ? Math.max(MOWER_SIZE, (7 * 1) / k) : (ICON_PX * 1) / k;
-    const size = base * (this.icons.mowerSize ?? 1);
+    const shape = body ? bodyShape(body, pose.x, pose.y, pose.heading) : null;
     // svg y points down, so the map's ccw heading becomes a cw rotation
     const deg = (-pose.heading * 180) / Math.PI;
-    const key = `${this.icons.mower}|${this.emergency}`;
+
+    // the body as it really is, under the icon
+    if (shape) {
+      if (!this.bodyLayer.firstElementChild) this.bodyLayer.innerHTML = '<polygon class="mowerBody"/>';
+      this.bodyLayer.firstElementChild.setAttribute('points', shape.corners.map((c) => `${c.x},${-c.y}`).join(' '));
+    } else {
+      this.bodyLayer.innerHTML = '';
+    }
+
+    // a real mower from above lies exactly on its body, other icons the same size on screen as the dock or at their
+    // real size (never smaller than a few pixels), in the middle of the body with the sizes set
+    const onBody = !!(icon.fit && shape);
+    const key = `${this.icons.mower}|${this.emergency}|${onBody}`;
     if (this.mower.dataset.key !== key) {
-      const shape = icon.draw(this.emergency);
-      this.mower.innerHTML = `<g>${icon.fit ? `<g transform="scale(1 ${icon.fit})">${shape}</g>` : shape}</g>`;
+      const drawn = icon.draw(this.emergency);
+      this.mower.innerHTML = `<g>${icon.fit && !onBody ? `<g transform="scale(1 ${icon.fit})">${drawn}</g>` : drawn}</g>`;
       this.mower.dataset.key = key;
     }
-    this.mower.firstElementChild.setAttribute('transform', `translate(${pose.x} ${-pose.y}) rotate(${deg}) scale(${size})`);
+    let transform;
+    if (onBody) {
+      transform = `translate(${shape.middle.x} ${-shape.middle.y}) rotate(${deg}) scale(${(body.front + body.rear) / 2} ${body.width / 2})`;
+    } else {
+      const real = this.icons.mowerRealSize ? shape : null;
+      const at = real ? real.middle : pose;
+      const realSize = real ? (body.front + body.rear) / 2 : MOWER_SIZE;
+      const base = this.icons.mowerRealSize ? Math.max(realSize, 7 / k) : ICON_PX / k;
+      const size = base * (real ? 1 : (this.icons.mowerSize ?? 1));
+      transform = `translate(${at.x} ${-at.y}) rotate(${deg}) scale(${size})`;
+    }
+    this.mower.firstElementChild.setAttribute('transform', transform);
+    this.drawBlade(shape, k);
+  }
+
+  // over the icon: the blade where it sits under the mower, filled while it's on and turning like the mow motor, and
+  // the point OpenMower follows. built again only when the blade or its turning changes, so the turning goes on
+  drawBlade(shape, k) {
+    const top = this.top;
+    if (!shape) {
+      top.innerHTML = '';
+      top.dataset.key = '';
+      return;
+    }
+    const r = this.body.blade / 2;
+    // forwards is drawn clockwise, OpenMower's rpm is negative when the motor turns the other way round
+    const spin = this.motion ? Math.sign(this.rpm) : 0;
+    const seconds = spin ? bladeSeconds(this.rpm) : 0;
+    const key = `${r}|${spin}|${seconds}`;
+    if (top.dataset.key !== key) {
+      top.dataset.key = key;
+      top.innerHTML =
+        (r > 0
+          ? `<g class="mowerBladeAt"><circle class="mowerBlade" r="${r}"/><g class="mowerBladeBar">` +
+            `<rect x="${-r * 0.92}" y="${-r * 0.09}" width="${r * 1.84}" height="${r * 0.18}" rx="${r * 0.05}"/>` +
+            `<rect x="${-r * 0.92}" y="${-r * 0.09}" width="${r * 0.3}" height="${r * 0.18}" transform="rotate(-20 ${-r * 0.77} 0)"/>` +
+            `<rect x="${r * 0.62}" y="${-r * 0.09}" width="${r * 0.3}" height="${r * 0.18}" transform="rotate(-20 ${r * 0.77} 0)"/>` +
+            (spin
+              ? `<animateTransform attributeName="transform" type="rotate" from="0 0 0" to="${spin * 360} 0 0" dur="${seconds}s" repeatCount="indefinite"/>`
+              : '') +
+            '</g></g>'
+          : '') + '<circle class="mowerAxle"/>';
+    }
+    const at = top.querySelector('.mowerBladeAt');
+    if (at) {
+      at.setAttribute('transform', `translate(${shape.blade.x} ${-shape.blade.y})`);
+      at.firstElementChild.classList.toggle('on', !!this.pose.blades);
+    }
+    const axle = top.lastElementChild;
+    axle.setAttribute('cx', this.pose.x);
+    axle.setAttribute('cy', -this.pose.y);
+    axle.setAttribute('r', 1.5 / k);
   }
 
   // dragging moves the map, two fingers zoom it
@@ -1087,7 +1419,7 @@ class MowbiteCard extends HTMLElement {
           map: 'Map',
           map_height: 'Map height (empty: square like in the app)',
           status: 'Status and buttons',
-          blur: 'Blur behind the glass (slower on old tablets)',
+          blur: 'Blur behind the glass and a turning blade on the map (slower on old tablets)',
         })[schema.name],
     };
   }
@@ -1220,6 +1552,8 @@ class MowbiteCard extends HTMLElement {
       this._applyLook();
       this._map?.setIcons(this._settings.icons);
     }
+    this._body = bodyFrom(this._settings?.mower) ?? bodyFrom(data.mower_sizes);
+    this._map?.setBody(this._body);
     if (data.track) {
       // the whole track again after a reset, otherwise only the new points
       this._track = data.track.reset || !this._track ? {reset: true, points: [...data.track.points]} : {reset: true, points: [...this._track.points, ...data.track.points]};
@@ -1348,6 +1682,7 @@ class MowbiteCard extends HTMLElement {
     this._map?.destroy();
     this._map = new MowbiteMap(this.shadowRoot.querySelector('.map'));
     this._map.setIcons(this._settings?.icons);
+    this._map.setBody(this._body ?? null);
     if (this._mapData) this._map.setMap(this._mapData);
     if (this._track) this._map.setTrack(this._track);
     this._applyLook();
@@ -1513,6 +1848,8 @@ class MowbiteCard extends HTMLElement {
       // it follows the mower while it drives, like the app
       if (driving !== this._wasDriving) this._map.setFollow(driving);
       this._wasDriving = driving;
+      const still = this._config.blur === false || !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      this._map.setBlade(Number(sensors.om_mow_motor_rpm) || 0, !still);
       this._map.setPose(data.position ?? state.pose, !!state.emergency);
     }
 

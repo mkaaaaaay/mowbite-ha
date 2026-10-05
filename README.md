@@ -28,6 +28,8 @@ MowBite is a community project and not affiliated with the OpenMower project.
   below the other. It comes with the integration, no resource to add.
 - **Map colours and icons from MowBite**: with the address of your MowBite container set, the map uses the
   colours, icons and icon sizes you picked in the app.
+- **The mower at its real size**: with the mower's sizes known the map draws its outline with the blade, and along
+  the track the strip the blade really cut.
 
 ![The card on a phone](images/phone.png)
 
@@ -65,6 +67,9 @@ Under **Configure** on the integration:
   map uses MowBite's default colours and icons without it.
 - **Show the map**: when the cards show the map, as set in the MowBite app, only while the mower drives, always
   or never. A card can still have its own setting.
+- **Mower sizes**: for the mower's outline and the strip its blade cuts on the map. Pick your mower, or Own sizes
+  for a form like the one in the MowBite app (in cm, from the middle between the rear drive wheels). Sizes set in
+  the MowBite app come first.
 
 ## The card
 
@@ -77,7 +82,7 @@ map: integration   # integration, app, auto (while it drives), always or never
 map_height: 260    # pixels, leave it out for a square map like in the app
 status: true       # false shows only the map
 theme: frost       # frost (frosted glass), dark, light or auto (like Home Assistant)
-blur: true         # false is lighter for older tablets
+blur: true         # false is lighter for older tablets: no blur behind the glass, the blade doesn't turn
 ```
 
 The map zooms with the buttons, the mouse wheel or two fingers, and moves when dragged. The target button keeps

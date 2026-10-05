@@ -23,7 +23,20 @@ from homeassistant.helpers.selector import (
 )
 
 from .app import CannotReachApp, async_fetch
-from .const import CONF_APP_URL, CONF_MAP, CONF_PREFIX, DEFAULT_NAME, DEFAULT_PORT, DOMAIN, MAP_MODES
+from .const import (
+    CONF_APP_URL,
+    CONF_MAP,
+    CONF_MOWER,
+    CONF_PREFIX,
+    CONF_SIZES,
+    DEFAULT_NAME,
+    DEFAULT_PORT,
+    DOMAIN,
+    MAP_MODES,
+    MAX_BLADE,
+    MOWER_MODELS,
+    SIZE_KEYS,
+)
 from .mower import CannotConnect, InvalidAuth, NoMower, async_probe, normalize_prefix
 
 _LOGGER = logging.getLogger(__name__)
@@ -116,7 +129,10 @@ class MowbiteConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class MowbiteOptionsFlow(OptionsFlowWithReload):
-    """Where the MowBite app runs, so the map has its colours and symbols, and when the cards show the map."""
+    """Where the MowBite app runs, when the cards show the map, and the mower's sizes for drawing it."""
+
+    def __init__(self) -> None:
+        self._options: dict[str, Any] = {}
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
@@ -130,7 +146,12 @@ class MowbiteOptionsFlow(OptionsFlowWithReload):
                 except CannotReachApp:
                     errors["base"] = "cannot_reach_app"
             if not errors:
-                return self.async_create_entry(data={CONF_APP_URL: url, CONF_MAP: user_input.get(CONF_MAP, "app")})
+                mower = user_input.get(CONF_MOWER, "none")
+                self._options = {CONF_APP_URL: url, CONF_MAP: user_input.get(CONF_MAP, "app"), CONF_MOWER: mower}
+                if mower == "custom":
+                    return await self.async_step_sizes()
+                self._options[CONF_SIZES] = MOWER_MODELS.get(mower)
+                return self.async_create_entry(data=self._options)
         current = user_input or self.config_entry.options
         return self.async_show_form(
             step_id="init",
@@ -140,7 +161,52 @@ class MowbiteOptionsFlow(OptionsFlowWithReload):
                     vol.Optional(CONF_MAP, default=current.get(CONF_MAP, "app")): SelectSelector(
                         SelectSelectorConfig(options=MAP_MODES, mode=SelectSelectorMode.DROPDOWN, translation_key="map_mode")
                     ),
+                    vol.Optional(CONF_MOWER, default=current.get(CONF_MOWER, "none")): SelectSelector(
+                        SelectSelectorConfig(
+                            options=["none", *MOWER_MODELS, "custom"],
+                            mode=SelectSelectorMode.DROPDOWN,
+                            translation_key="mower",
+                        )
+                    ),
                 }
+            ),
+            errors=errors,
+        )
+
+    async def async_step_sizes(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """The mower's own sizes in cm, like under Mower sizes in the MowBite app, kept in metres like the app keeps them."""
+        errors: dict[str, str] = {}
+        if user_input is not None and SIZE_KEYS[0] in user_input:
+            sizes = {key: round(float(user_input.get(key, 0)) / 100, 4) for key in SIZE_KEYS}
+            if sizes["width"] <= 0 or sizes["front"] + sizes["rear"] <= 0:
+                errors["base"] = "body_needed"
+            elif not 0 <= sizes["blade"] <= MAX_BLADE:
+                errors["blade"] = "blade_too_big"
+            else:
+                self._options[CONF_SIZES] = sizes
+                return self.async_create_entry(data=self._options)
+            current = user_input
+        else:
+            stored = self.config_entry.options.get(CONF_SIZES) or MOWER_MODELS["yf_nx"]
+            current = {key: round(stored.get(key, 0) * 100, 1) for key in SIZE_KEYS}
+
+        def cm(low: float, high: float) -> NumberSelector:
+            return NumberSelector(
+                NumberSelectorConfig(min=low, max=high, step=0.1, mode=NumberSelectorMode.BOX, unit_of_measurement="cm")
+            )
+
+        limits = {
+            "width": cm(1, 200),
+            "front": cm(-100, 200),
+            "rear": cm(-100, 200),
+            "blade": cm(0, MAX_BLADE * 100),
+            "bladeAhead": cm(-100, 200),
+            "bladeOffset": cm(-100, 100),
+        }
+        return self.async_show_form(
+            step_id="sizes",
+            data_schema=vol.Schema(
+                {vol.Required(key, default=current.get(key, 0.0)): limits[key] for key in SIZE_KEYS}
             ),
             errors=errors,
         )

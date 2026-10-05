@@ -19,7 +19,7 @@ _LOGGER = logging.getLogger(__name__)
 SETTINGS_PATH = "/cgi-bin/settings"
 REFRESH = timedelta(minutes=5)
 # what the card uses of them
-KEYS = ("colors", "icons", "dashboard")
+KEYS = ("colors", "icons", "dashboard", "mower")
 
 
 class CannotReachApp(Exception):

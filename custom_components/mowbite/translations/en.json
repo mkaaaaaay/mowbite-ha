@@ -158,19 +158,35 @@
   },
   "options": {
     "error": {
-      "cannot_reach_app": "No MowBite answers at that address."
+      "cannot_reach_app": "No MowBite answers at that address.",
+      "body_needed": "Width and the lengths to the front and back are needed.",
+      "blade_too_big": "The blade diameter can be at most 40 cm."
     },
     "step": {
       "init": {
         "data": {
           "app_url": "MowBite address",
-          "map": "Show the map"
+          "map": "Show the map",
+          "mower": "Mower sizes"
         },
         "data_description": {
           "app_url": "Where the MowBite app runs, e.g. http://openmower:8080. The map then has the colours and symbols set in the app. Empty: the app's defaults.",
-          "map": "When the MowBite card shows the map, unless a card is set otherwise."
+          "map": "When the MowBite card shows the map, unless a card is set otherwise.",
+          "mower": "For the mower's outline and the strip its blade cuts on the map. Sizes set in the MowBite app come first."
         },
         "title": "Map like in MowBite"
+      },
+      "sizes": {
+        "title": "Own mower sizes",
+        "description": "In cm, measured from the point OpenMower follows: the middle between the rear drive wheels. A blade of 0 draws only the outline.",
+        "data": {
+          "width": "Width",
+          "front": "Rear axle to the front",
+          "rear": "Rear axle to the back",
+          "blade": "Blade diameter",
+          "bladeAhead": "Blade ahead of the rear axle",
+          "bladeOffset": "Blade to the left of the middle"
+        }
       }
     }
   },
@@ -181,6 +197,13 @@
         "auto": "Only while the mower drives",
         "always": "Always",
         "never": "Never"
+      }
+    },
+    "mower": {
+      "options": {
+        "none": "None",
+        "yf_nx": "YardForce NX60 / NX80 / NX100",
+        "custom": "Own sizes"
       }
     }
   }

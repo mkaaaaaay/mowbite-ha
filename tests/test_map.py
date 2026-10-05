@@ -16,7 +16,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.util import dt as dt_util
 
-from custom_components.mowbite.const import CONF_APP_URL, CONF_MAP
+from custom_components.mowbite.const import CONF_APP_URL, CONF_MAP, CONF_MOWER, CONF_SIZES, MOWER_MODELS
 from custom_components.mowbite.mower import Mower, RpcError, Track, _history
 
 from .conftest import send
@@ -149,6 +149,7 @@ SETTINGS = {
     "icons": {"mower": "nx100", "dock": "yardforce", "mowerSize": 1.9, "dockSize": 1.1, "mowerRealSize": True},
     "colors": {"mower": "#32b341", "obstacle": "#4400ff"},
     "dashboard": {"map": "auto"},
+    "mower": {"width": 0.5, "front": 0.5, "rear": 0.2, "blade": 0.25},
     "weather": True,
     "mowers": [],
 }
@@ -175,6 +176,7 @@ async def test_app_settings(
         "icons": SETTINGS["icons"],
         "colors": SETTINGS["colors"],
         "dashboard": SETTINGS["dashboard"],
+        "mower": SETTINGS["mower"],
     }
 
 
@@ -195,10 +197,70 @@ async def test_options(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker,
     )
     await hass.async_block_till_done()
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert entry.options == {CONF_APP_URL: "http://openmower:8082", CONF_MAP: "always"}
+    assert entry.options == {CONF_APP_URL: "http://openmower:8082", CONF_MAP: "always", CONF_MOWER: "none", CONF_SIZES: None}
     # the entry was loaded again with it
     assert entry.runtime_data.app.data["icons"]["mower"] == "nx100"
     assert entry.runtime_data.map_mode == "always"
+    assert entry.runtime_data.mower_sizes is None
+
+
+async def test_options_mower_model(hass: HomeAssistant, entry: MockConfigEntry, no_connection: None) -> None:
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {CONF_MOWER: "yf_nx"})
+    await hass.async_block_till_done()
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    # a model's sizes as MowBite has them for it
+    assert entry.options[CONF_SIZES] == MOWER_MODELS["yf_nx"]
+    assert entry.runtime_data.mower_sizes == {"width": 0.41, "front": 0.43, "rear": 0.18, "blade": 0.18, "bladeAhead": 0.185, "bladeOffset": 0.0}
+
+
+async def test_options_own_sizes(hass: HomeAssistant, entry: MockConfigEntry, no_connection: None) -> None:
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {CONF_MOWER: "custom"})
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "sizes"
+    # in cm like the app's form, the NX's to start with
+    schema = {str(key): key.default() for key in result["data_schema"].schema}
+    assert schema["width"] == 41.0
+    assert schema["bladeAhead"] == 18.5
+
+    own = {"width": 52, "front": 48.5, "rear": 21, "blade": 22, "bladeAhead": 30, "bladeOffset": -4}
+    # no body without the lengths to the front and back
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {**own, "front": -21, "rear": 21})
+    assert result["errors"] == {"base": "body_needed"}
+    result = await hass.config_entries.options.async_configure(result["flow_id"], own)
+    await hass.async_block_till_done()
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    # kept in metres, like the app keeps them
+    assert entry.options[CONF_MOWER] == "custom"
+    assert entry.options[CONF_SIZES] == {"width": 0.52, "front": 0.485, "rear": 0.21, "blade": 0.22, "bladeAhead": 0.3, "bladeOffset": -0.04}
+
+    # opened again, the form has the own sizes
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {CONF_MOWER: "custom"})
+    schema = {str(key): key.default() for key in result["data_schema"].schema}
+    assert schema["front"] == 48.5
+    assert schema["bladeOffset"] == -4.0
+
+
+async def test_mower_sizes_reach_the_card(
+    hass: HomeAssistant, hass_ws_client: WebSocketGenerator, entry: MockConfigEntry, no_connection: None
+) -> None:
+    entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(entry, options={CONF_MOWER: "yf_nx", CONF_SIZES: MOWER_MODELS["yf_nx"]})
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    entry.runtime_data.mower._connected = True
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id({"type": "mowbite/subscribe", "entity_id": MOWER})
+    assert (await client.receive_json())["success"]
+    assert (await client.receive_json())["event"]["mower_sizes"] == MOWER_MODELS["yf_nx"]
 
 
 async def test_map_mode_reaches_the_card(hass: HomeAssistant, hass_ws_client: WebSocketGenerator, mower: Mower) -> None:

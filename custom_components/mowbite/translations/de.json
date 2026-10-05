@@ -158,19 +158,35 @@
   },
   "options": {
     "error": {
-      "cannot_reach_app": "Unter dieser Adresse antwortet kein MowBite."
+      "cannot_reach_app": "Unter dieser Adresse antwortet kein MowBite.",
+      "body_needed": "Breite und die Längen nach vorne und hinten werden gebraucht.",
+      "blade_too_big": "Der Messer-Durchmesser darf höchstens 40 cm sein."
     },
     "step": {
       "init": {
         "data": {
           "app_url": "MowBite-Adresse",
-          "map": "Karte anzeigen"
+          "map": "Karte anzeigen",
+          "mower": "Mäher-Maße"
         },
         "data_description": {
           "app_url": "Wo die MowBite-App läuft, z. B. http://openmower:8080. Die Karte bekommt dann die Farben und Symbole aus der App. Leer: die Standardwerte der App.",
-          "map": "Wann die MowBite-Karte die Karte zeigt, sofern an einer Karte nichts anderes eingestellt ist."
+          "map": "Wann die MowBite-Karte die Karte zeigt, sofern an einer Karte nichts anderes eingestellt ist.",
+          "mower": "Für den Umriss des Mähers und den Streifen, den sein Messer auf der Karte schneidet. In der MowBite-App eingestellte Maße gehen vor."
         },
         "title": "Karte wie in MowBite"
+      },
+      "sizes": {
+        "title": "Eigene Mäher-Maße",
+        "description": "In cm, gemessen ab dem Punkt, dem OpenMower folgt: der Mitte zwischen den hinteren Antriebsrädern. Ein Messer von 0 zeichnet nur den Umriss.",
+        "data": {
+          "width": "Breite",
+          "front": "Hinterachse bis Front",
+          "rear": "Hinterachse bis Heck",
+          "blade": "Messer-Durchmesser",
+          "bladeAhead": "Messer vor der Hinterachse",
+          "bladeOffset": "Messer links der Mitte"
+        }
       }
     }
   },
@@ -181,6 +197,13 @@
         "auto": "Nur wenn der Mäher fährt",
         "always": "Immer",
         "never": "Nie"
+      }
+    },
+    "mower": {
+      "options": {
+        "none": "Keine",
+        "yf_nx": "YardForce NX60 / NX80 / NX100",
+        "custom": "Eigene Maße"
       }
     }
   }

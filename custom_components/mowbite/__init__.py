@@ -21,7 +21,7 @@ from homeassistant.util import dt as dt_util
 
 from . import websocket
 from .app import AppSettings
-from .const import CONF_APP_URL, CONF_MAP, CONF_PREFIX, DOMAIN
+from .const import CONF_APP_URL, CONF_MAP, CONF_PREFIX, CONF_SIZES, DOMAIN
 from .mower import Mower
 from .snooze import ACTION_SNOOZE_HOUR, ACTION_SNOOZE_MORNING, Snooze, next_morning
 
@@ -52,6 +52,8 @@ class MowbiteData:
     app: AppSettings
     # when the cards show the map: as set in the app, while driving, always or never
     map_mode: str = "app"
+    # the mower's sizes set here, for when the app has none
+    mower_sizes: dict | None = None
 
 
 type MowbiteConfigEntry = ConfigEntry[MowbiteData]
@@ -105,7 +107,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: MowbiteConfigEntry) -> b
     snooze = Snooze(hass, entry.entry_id)
     await snooze.async_load()
     app = AppSettings(hass, entry.options.get(CONF_APP_URL))
-    entry.runtime_data = MowbiteData(mower, snooze, app, entry.options.get(CONF_MAP, "app"))
+    entry.runtime_data = MowbiteData(
+        mower, snooze, app, entry.options.get(CONF_MAP, "app"), entry.options.get(CONF_SIZES)
+    )
     entry.async_on_unload(snooze.unload)
     # the app may be off as well, the map then has the app's default colours until it's there
     entry.async_on_unload(await app.async_start())

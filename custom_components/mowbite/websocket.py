@@ -113,6 +113,7 @@ def snapshot(data: MowbiteData) -> dict[str, Any]:
         # only when the newest state change is this state, older mowers don't record every one (a pause, say)
         "since": last.get("t") if current is not None and last.get("state") == current else None,
         "map_mode": data.map_mode,
+        "mower_sizes": data.mower_sizes,
         "area": mower.area if current == "MOWING" else None,
     }
 
