@@ -61,9 +61,10 @@ const DE = {
   Start: 'Start',
   Pause: 'Pause',
   'Go home': 'Nach Hause',
-  'Skip area': 'Überspringen',
+  // soft hyphens: a narrow button breaks them where German does, not anywhere (not every browser hyphenates German)
+  'Skip area': 'Über­springen',
   Continue: 'Weiter',
-  'Undo ({n} s)': 'Rückgängig ({n} s)',
+  'Undo ({n} s)': 'Rück­gängig ({n} s)',
   'Reset emergency': 'Notaus zurücksetzen',
   'waiting for the mower…': 'warte auf den Mäher…',
   'connecting…': 'verbinde…',
