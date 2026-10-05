@@ -1,5 +1,5 @@
 blueprint:
-  name: MowBite notifications
+  name: "MowBite for OpenMower: notifications"
   description: >-
     Sends the mower's events to a phone with the Home Assistant app. The message comes from the
     integration in the language Home Assistant is set to, the same wording the MowBite app uses.

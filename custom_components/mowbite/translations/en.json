@@ -37,7 +37,7 @@
           "host": "Usually the mower itself, e.g. 192.168.1.50 or openmower.local.",
           "prefix": "Only if OpenMower publishes behind a prefix, e.g. openmower/. Empty on the mower's own broker."
         },
-        "description": "The MQTT broker your OpenMower publishes to. MowBite talks to the mower directly, Home Assistant's own MQTT integration isn't needed."
+        "description": "The MQTT broker your OpenMower publishes to. MowBite for OpenMower talks to the mower directly, Home Assistant's own MQTT integration isn't needed."
       }
     }
   },

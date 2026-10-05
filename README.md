@@ -1,8 +1,8 @@
-# MowBite for Home Assistant
+# MowBite for OpenMower
 
-Brings an [OpenMower](https://github.com/ClemensElflein/OpenMower) robot mower into Home Assistant, with the
-map and the look of [MowBite](https://github.com/mkaaaaaay/mowbite). It talks to the mower's MQTT broker
-directly, no cloud and no extra add-on.
+A Home Assistant integration that brings an [OpenMower](https://github.com/ClemensElflein/OpenMower) robot mower
+into Home Assistant, with the map and the look of [MowBite](https://github.com/mkaaaaaay/mowbite). It talks to the
+mower's MQTT broker directly, no cloud and no extra add-on.
 
 MowBite is a community project and not affiliated with the OpenMower project.
 
@@ -45,14 +45,14 @@ You need Home Assistant 2026.9 or newer and the MQTT broker on your mower reacha
 (port 1883).
 
 **With HACS**: three dots top right, Custom repositories, add `https://github.com/mkaaaaaay/mowbite-ha` with
-the type Integration. Then search for MowBite in HACS, download it and restart Home Assistant.
+the type Integration. Then search for MowBite for OpenMower in HACS, download it and restart Home Assistant.
 
 **By hand**: copy `custom_components/mowbite` into the `custom_components` folder of your Home Assistant
 configuration and restart.
 
 ## Set up
 
-Settings, Devices & services, Add integration, MowBite:
+Settings, Devices & services, Add integration, MowBite for OpenMower:
 
 - **Broker host**: usually the mower itself, `openmower` or its IP address. **Port** 1883.
 - **Topic prefix**: empty on the mower's own broker. Only if your OpenMower publishes behind a prefix, for
@@ -73,7 +73,7 @@ Under **Configure** on the integration:
 
 ## The card
 
-Edit a dashboard, add a card and search for MowBite. In YAML:
+Edit a dashboard, add a card and search for MowBite for OpenMower. In YAML:
 
 ```yaml
 type: custom:mowbite-card
@@ -82,11 +82,13 @@ map: integration   # integration, app, auto (while it drives), always or never
 map_height: 260    # pixels, leave it out for a square map like in the app
 status: true       # false shows only the map
 theme: frost       # frost (frosted glass), dark, light or auto (like Home Assistant)
-blur: true         # false is lighter for older tablets: no blur behind the glass, the blade doesn't turn
+blur: true         # false is lighter for older tablets
 ```
 
-The map zooms with the buttons, the mouse wheel or two fingers, and moves when dragged. The target button keeps
-the mower in view, it does that by itself while the mower drives.
+The map zooms with the buttons, the mouse wheel or two fingers, and moves when dragged. While the mower drives the
+map follows it like the app's overview: a few metres around the mower, with the mower gliding in the middle.
+Zooming changes how much is shown around it, dragging the map stops following, the target button starts it
+again.
 
 ## Notifications
 

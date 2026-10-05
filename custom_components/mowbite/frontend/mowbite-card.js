@@ -778,11 +778,6 @@ const MAP_STYLE = `
     stroke-dasharray: none;
   }
 
-  .mowerBladeBar {
-    fill: var(--c-swath);
-    fill-opacity: 0.6;
-  }
-
   .mowerAxle {
     fill: var(--c-body);
   }
@@ -949,11 +944,66 @@ function swathEnd(from, end, r) {
   });
 }
 
-// seconds for one turn of a drawn blade: 2.5 s at 2400 rpm (the real 40 a second would only blur), in half seconds so
-// a wobbling rpm doesn't keep restarting the animation
-function bladeSeconds(rpm) {
-  const s = Math.min(10, Math.max(0.8, 6000 / Math.abs(rpm || 1)));
-  return Math.max(1, Math.round(s * 2)) / 2;
+// a track polyline takes this many points, then the next one goes on: a new point only redraws a short one
+const TRACK_CHUNK = 200;
+// further than this the mower doesn't glide, it's put there (m)
+const JUMP = 5;
+// following the mower the map shows this many metres around it, like the app's overview, until zoomed
+const FOLLOW_SPAN = 6;
+
+// Poses come about once a second. Easing towards each new one looks like stop and go, so like the app the mower is
+// played back one update interval late, at constant speed between the last two
+class EasedPose {
+  constructor() {
+    this.samples = [];
+    this.interval = 200;
+  }
+
+  // a new pose, false when it's the one there already
+  push(pose, now) {
+    const list = this.samples;
+    if (!pose) {
+      const had = list.length > 0;
+      list.length = 0;
+      return had;
+    }
+    const last = list[list.length - 1];
+    if (last && last.pose.x === pose.x && last.pose.y === pose.y && last.pose.heading === pose.heading) {
+      last.pose = pose;
+      return false;
+    }
+    if (last) {
+      const dt = now - last.t;
+      if (Math.hypot(pose.x - last.pose.x, pose.y - last.pose.y) > JUMP || dt > 3000) list.length = 0;
+      else this.interval = this.interval * 0.8 + Math.min(1500, Math.max(50, dt)) * 0.2;
+    }
+    list.push({t: now, pose});
+    if (list.length > 10) list.shift();
+    return true;
+  }
+
+  // where the mower is drawn now, and whether it's still on its way to the newest pose
+  at(now) {
+    const list = this.samples;
+    if (!list.length) return {pose: null, moving: false};
+    const newest = list[list.length - 1];
+    const at = now - this.interval;
+    if (list.length < 2 || at >= newest.t) return {pose: newest.pose, moving: false};
+    let i = list.length - 2;
+    while (i > 0 && list[i].t > at) i--;
+    const a = list[i];
+    const b = list[i + 1];
+    const f = Math.min(1, Math.max(0, (at - a.t) / (b.t - a.t || 1)));
+    return {
+      pose: {
+        ...newest.pose,
+        x: a.pose.x + (b.pose.x - a.pose.x) * f,
+        y: a.pose.y + (b.pose.y - a.pose.y) * f,
+        heading: a.pose.heading + turned(b.pose.heading, a.pose.heading) * f,
+      },
+      moving: true,
+    };
+  }
 }
 
 const svgPath = (pts) => pts.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(3)} ${(-p.y).toFixed(3)}`).join('');
@@ -993,8 +1043,18 @@ class MowbiteMap {
     this.points = [];
     // the stretch with the blades on the strip is still growing along: its scan and its growing piece and ends
     this.stretch = null;
-    this.rpm = 0;
-    this.motion = true;
+    // an old tablet's light card glides at fewer frames
+    this.light = false;
+    // the mower glides between the poses that come in, drawn every frame while it moves, in follow mode with the map
+    // gliding along under it
+    this.eased = new EasedPose();
+    this.frame = 0;
+    this.drawnAt = 0;
+    this.followSpan = FOLLOW_SPAN;
+    // whether the view is already the window around the mower, or still the one from before following
+    this.windowed = false;
+    // the svg's size, measured when it changes rather than every frame
+    this.box = null;
     this.map = null;
     this.icons = {};
     this.view = null; // {x, y, w, h} in svg units (x, -y)
@@ -1030,19 +1090,23 @@ class MowbiteMap {
   }
 
   refresh() {
-    if (this.view) this.setView(this.view);
+    const box = this.svg.getBoundingClientRect();
+    this.box = {width: box.width, height: box.height};
+    if (this.view) this.setView(this.view, true);
     else this.fit();
+    this.wake();
   }
 
   destroy() {
     this.resize.disconnect();
+    cancelAnimationFrame(this.frame);
+    this.frame = 0;
   }
 
   // pixels per metre at the current view, the svg is fitted (meet) into its box
   get k() {
-    const box = this.svg.getBoundingClientRect();
-    if (!this.view || !box.width) return 40;
-    return Math.min(box.width / this.view.w, box.height / this.view.h);
+    if (!this.view || !this.box?.width) return 40;
+    return Math.min(this.box.width / this.view.w, this.box.height / this.view.h);
   }
 
   toWorld(clientX, clientY) {
@@ -1093,7 +1157,7 @@ class MowbiteMap {
     for (const [x, y, blades] of update.points) {
       let run = this.runs[this.runs.length - 1];
       const point = `${x},${-y}`;
-      if (!run || run.blades !== !!blades) {
+      if (!run || run.blades !== !!blades || run.points.length >= TRACK_CHUNK) {
         const el = document.createElementNS(svgNS, 'polyline');
         el.setAttribute('class', blades ? 'track' : 'transit');
         // the new run starts where the last one ended, so the line doesn't break
@@ -1119,10 +1183,8 @@ class MowbiteMap {
     this.drawMower();
   }
 
-  // how fast the mow motor turns, and whether the drawn blade may turn with it
-  setBlade(rpm, motion) {
-    this.rpm = rpm;
-    this.motion = motion;
+  setLight(light) {
+    this.light = light;
   }
 
   // the strip anew, along the whole track
@@ -1183,16 +1245,55 @@ class MowbiteMap {
   }
 
   setPose(pose, emergency) {
-    this.pose = pose;
-    this.emergency = emergency;
-    this.drawMower();
-    if (this.follow && pose) this.center(pose.x, -pose.y);
+    const moved = this.eased.push(pose, performance.now());
+    if (moved || emergency !== this.emergency || (pose && !this.pose)) {
+      this.emergency = emergency;
+      this.wake();
+    }
+  }
+
+  wake() {
+    if (!this.frame) this.frame = requestAnimationFrame((now) => this.tick(now));
+  }
+
+  // one frame: the mower where it is on its way, and the view along with it in follow mode
+  tick(now) {
+    this.frame = 0;
+    // a hidden map draws nothing, it catches up when it shows again
+    if (!this.box?.width) return;
+    const {pose, moving} = this.eased.at(now);
+    // the mower is slow: drawn only once it moved a pixel on screen, most frames would draw it where it already is.
+    // at most every other frame on an old tablet's light card
+    const last = this.pose;
+    let draw = true;
+    if (moving && last && pose) {
+      const k = this.k;
+      const step = Math.max(Math.hypot(pose.x - last.x, pose.y - last.y) * k, Math.abs(turned(pose.heading, last.heading)) * 0.3 * k);
+      draw = step >= 1 && (!this.light || now - this.drawnAt >= 30);
+    }
+    if (draw) {
+      this.drawnAt = now;
+      this.pose = pose;
+      this.drawMower();
+      if (this.follow && pose) this.followMower();
+    }
+    if (moving) this.wake();
   }
 
   setFollow(on) {
     this.follow = on;
+    this.windowed = false;
     this.section.querySelector('[data-zoom="follow"]').classList.toggle('on', on);
-    if (on && this.pose) this.center(this.pose.x, -this.pose.y);
+    if (on && this.pose) this.followMower();
+  }
+
+  // like the app: the mower in the middle of a window a few metres wide, as big as it was zoomed to the last time
+  followMower() {
+    if (!this.view) return;
+    const w = this.windowed ? this.view.w : this.followSpan;
+    const h = this.windowed ? this.view.h : this.followSpan;
+    this.windowed = true;
+    this.setView({x: this.pose.x - w / 2, y: -this.pose.y - h / 2, w, h});
   }
 
   fit() {
@@ -1218,19 +1319,26 @@ class MowbiteMap {
   zoom(factor, at) {
     if (!this.view) return;
     const v = this.view;
+    // following, it zooms around the mower, and the next time it follows it's that close again
+    const following = this.follow && this.pose && this.windowed;
+    if (following) at = {x: this.pose.x, y: -this.pose.y};
     const cx = at ? at.x : v.x + v.w / 2;
     const cy = at ? at.y : v.y + v.h / 2;
     const w = Math.min(Math.max(v.w * factor, 0.5), 2000);
     const h = (v.h * w) / v.w;
     this.setView({x: cx - ((cx - v.x) * w) / v.w, y: cy - ((cy - v.y) * h) / v.h, w, h});
+    if (following) this.followSpan = Math.min(w, h);
   }
 
-  setView(view) {
+  setView(view, resized = false) {
+    const zoomed = resized || !this.view || view.w !== this.view.w || view.h !== this.view.h;
     this.view = view;
     this.svg.setAttribute('viewBox', `${view.x} ${view.y} ${view.w} ${view.h}`);
-    // icons that keep their size on screen follow the zoom
-    this.drawDocks();
-    this.drawMower();
+    // icons that keep their size on screen follow the zoom, moving the view leaves them as they are
+    if (zoomed) {
+      this.drawDocks();
+      this.drawMower();
+    }
   }
 
   drawDocks() {
@@ -1259,8 +1367,9 @@ class MowbiteMap {
   drawMower() {
     const pose = this.pose;
     if (!pose || !this.view) {
-      this.mower.innerHTML = '';
-      this.bodyLayer.innerHTML = '';
+      if (this.mower.firstChild) this.mower.innerHTML = '';
+      this.mower.dataset.key = '';
+      if (this.bodyLayer.firstChild) this.bodyLayer.innerHTML = '';
       this.drawBlade(null);
       return;
     }
@@ -1275,7 +1384,7 @@ class MowbiteMap {
     if (shape) {
       if (!this.bodyLayer.firstElementChild) this.bodyLayer.innerHTML = '<polygon class="mowerBody"/>';
       this.bodyLayer.firstElementChild.setAttribute('points', shape.corners.map((c) => `${c.x},${-c.y}`).join(' '));
-    } else {
+    } else if (this.bodyLayer.firstChild) {
       this.bodyLayer.innerHTML = '';
     }
 
@@ -1303,35 +1412,24 @@ class MowbiteMap {
     this.drawBlade(shape, k);
   }
 
-  // over the icon: the blade where it sits under the mower, filled while it's on and turning like the mow motor, and
-  // the point OpenMower follows. built again only when the blade or its turning changes, so the turning goes on
+  // over the icon: the blade where it sits under the mower, filled while it's on, and the point OpenMower follows
   drawBlade(shape, k) {
     const top = this.top;
     if (!shape) {
-      top.innerHTML = '';
+      if (top.firstChild) top.innerHTML = '';
       top.dataset.key = '';
       return;
     }
     const r = this.body.blade / 2;
-    // forwards is drawn clockwise, OpenMower's rpm is negative when the motor turns the other way round
-    const spin = this.motion ? Math.sign(this.rpm) : 0;
-    const seconds = spin ? bladeSeconds(this.rpm) : 0;
-    const key = `${r}|${spin}|${seconds}`;
+    const key = `${r}`;
     if (top.dataset.key !== key) {
       top.dataset.key = key;
       top.innerHTML =
         (r > 0
-          ? `<g class="mowerBladeAt"><circle class="mowerBlade" r="${r}"/><g class="mowerBladeBar">` +
-            `<rect x="${-r * 0.92}" y="${-r * 0.09}" width="${r * 1.84}" height="${r * 0.18}" rx="${r * 0.05}"/>` +
-            `<rect x="${-r * 0.92}" y="${-r * 0.09}" width="${r * 0.3}" height="${r * 0.18}" transform="rotate(-20 ${-r * 0.77} 0)"/>` +
-            `<rect x="${r * 0.62}" y="${-r * 0.09}" width="${r * 0.3}" height="${r * 0.18}" transform="rotate(-20 ${r * 0.77} 0)"/>` +
-            (spin
-              ? `<animateTransform attributeName="transform" type="rotate" from="0 0 0" to="${spin * 360} 0 0" dur="${seconds}s" repeatCount="indefinite"/>`
-              : '') +
-            '</g></g>'
+          ? `<g class="mowerBladeAt"><circle class="mowerBlade" r="${r}"/></g>`
           : '') + '<circle class="mowerAxle"/>';
     }
-    const at = top.querySelector('.mowerBladeAt');
+    const at = top.firstElementChild.classList.contains('mowerBladeAt') ? top.firstElementChild : null;
     if (at) {
       at.setAttribute('transform', `translate(${shape.blade.x} ${-shape.blade.y})`);
       at.firstElementChild.classList.toggle('on', !!this.pose.blades);
@@ -1419,7 +1517,7 @@ class MowbiteCard extends HTMLElement {
           map: 'Map',
           map_height: 'Map height (empty: square like in the app)',
           status: 'Status and buttons',
-          blur: 'Blur behind the glass and a turning blade on the map (slower on old tablets)',
+          blur: 'Blur behind the glass (slower on old tablets)',
         })[schema.name],
     };
   }
@@ -1556,7 +1654,8 @@ class MowbiteCard extends HTMLElement {
     this._map?.setBody(this._body);
     if (data.track) {
       // the whole track again after a reset, otherwise only the new points
-      this._track = data.track.reset || !this._track ? {reset: true, points: [...data.track.points]} : {reset: true, points: [...this._track.points, ...data.track.points]};
+      if (data.track.reset || !this._track) this._track = {reset: true, points: [...data.track.points]};
+      else for (const point of data.track.points) this._track.points.push(point);
       this._map?.setTrack(data.track);
     }
     this._update();
@@ -1848,8 +1947,7 @@ class MowbiteCard extends HTMLElement {
       // it follows the mower while it drives, like the app
       if (driving !== this._wasDriving) this._map.setFollow(driving);
       this._wasDriving = driving;
-      const still = this._config.blur === false || !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-      this._map.setBlade(Number(sensors.om_mow_motor_rpm) || 0, !still);
+      this._map.setLight(this._config.blur === false);
       this._map.setPose(data.position ?? state.pose, !!state.emergency);
     }
 

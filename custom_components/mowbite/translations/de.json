@@ -37,7 +37,7 @@
           "host": "Meist der Mäher selbst, z. B. 192.168.1.50 oder openmower.local.",
           "prefix": "Nur wenn OpenMower unter einem Präfix sendet, z. B. openmower/. Auf dem Broker des Mähers leer lassen."
         },
-        "description": "Der MQTT-Broker, an den dein OpenMower sendet. MowBite spricht direkt mit dem Mäher, die MQTT-Integration von Home Assistant brauchst du dafür nicht."
+        "description": "Der MQTT-Broker, an den dein OpenMower sendet. MowBite for OpenMower spricht direkt mit dem Mäher, die MQTT-Integration von Home Assistant brauchst du dafür nicht."
       }
     }
   },
