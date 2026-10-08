@@ -77,6 +77,24 @@ async def test_activity(hass: HomeAssistant, mower: Mower, changes: dict, activi
     assert hass.states.get(MOWER).state == activity
 
 
+async def test_idle_in_the_dock_or_on_the_lawn(hass: HomeAssistant, mower: Mower) -> None:
+    # Home Assistant before 2026.10 only knows docked
+    idle = getattr(LawnMowerActivity, "IDLE", LawnMowerActivity.DOCKED)
+    # charging: in the dock
+    assert hass.states.get(MOWER).state == LawnMowerActivity.DOCKED
+    # not charging, nothing on the charging contacts: standing on the lawn
+    send(mower, "robot_state/json", {**ROBOT_STATE, "is_charging": 0})
+    await hass.async_block_till_done()
+    assert hass.states.get(MOWER).state == idle
+    # fully charged it doesn't charge, but the contacts still have the dock's voltage
+    send(mower, "sensors/om_v_charge/data", "28.9")
+    await hass.async_block_till_done()
+    assert hass.states.get(MOWER).state == LawnMowerActivity.DOCKED
+    send(mower, "sensors/om_v_charge/data", "0.1")
+    await hass.async_block_till_done()
+    assert hass.states.get(MOWER).state == idle
+
+
 async def _call(hass: HomeAssistant, service: str) -> None:
     await hass.services.async_call("lawn_mower", service, {ATTR_ENTITY_ID: MOWER}, blocking=True)
 

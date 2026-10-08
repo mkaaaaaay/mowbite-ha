@@ -13,6 +13,8 @@ mower's MQTT broker directly, no cloud and no extra add-on.
 - **Sensors**: battery, state, GPS quality and accuracy, battery voltage, mow motor temperature, and more that
   are off by default (charge voltage and current, motor controller temperatures, mow motor current and speed).
   Emergency stop, charging and rain as binary sensors.
+- **Docked or on the lawn**: from Home Assistant 2026.10 on, a mower that stands still outside the dock shows as
+  idle, not as docked, so an automation for "docked" only fires in the dock.
 - **Buttons** for skipping an area and for resetting an emergency stop. The reset is off by default, an
   emergency stop has a reason out at the mower.
 - **Events** for automations and notifications: all areas done, heading home (with the reason: battery, rain,

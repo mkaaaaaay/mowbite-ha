@@ -26,15 +26,21 @@ from .mower import (
 
 PARALLEL_UPDATES = 0
 
-# mower_logic's states, IDLE is in the dock unless it's stuck somewhere, then emergency usually says so.
-# AREA_RECORDING has nothing to match, the state sensor shows it
+# mower_logic's states. IDLE is docked or standing on the lawn (see activity), AREA_RECORDING has nothing to match,
+# the state sensor shows it
 ACTIVITIES = {
     "MOWING": LawnMowerActivity.MOWING,
     "UNDOCKING": LawnMowerActivity.MOWING,
     "PAUSED": LawnMowerActivity.PAUSED,
     "DOCKING": LawnMowerActivity.RETURNING,
-    "IDLE": LawnMowerActivity.DOCKED,
 }
+
+# Home Assistant 2026.10 has a mower that stands still outside the dock, before that it can only be docked
+IDLE = getattr(LawnMowerActivity, "IDLE", LawnMowerActivity.DOCKED)
+
+# volts on the charging contacts above which the mower sits in the dock, also when it's fully charged and doesn't
+# charge any more (MowBite tells the dock the same way)
+DOCK_VOLTS = 20
 
 
 async def async_setup_entry(
@@ -52,7 +58,7 @@ class MowbiteLawnMower(MowbiteEntity, LawnMowerEntity):
     _attr_supported_features = (
         LawnMowerEntityFeature.START_MOWING | LawnMowerEntityFeature.PAUSE | LawnMowerEntityFeature.DOCK
     )
-    _listen = (KEY_STATE, KEY_ACTIONS)
+    _listen = (KEY_STATE, KEY_ACTIONS, "sensor:om_v_charge")
 
     def __init__(self, entry: MowbiteConfigEntry) -> None:
         super().__init__(entry, "mower")
@@ -71,7 +77,17 @@ class MowbiteLawnMower(MowbiteEntity, LawnMowerEntity):
         # a docking retry backs out of the dock (UNDOCKING) and tries again, it's still on its way home
         if current == "UNDOCKING" and self._before == "DOCKING":
             return LawnMowerActivity.RETURNING
+        if current == "IDLE":
+            return LawnMowerActivity.DOCKED if self._in_dock(state) else IDLE
         return ACTIVITIES.get(current)
+
+    def _in_dock(self, state: dict) -> bool:
+        if state.get("is_charging"):
+            return True
+        try:
+            return float(self.mower.sensors.get("om_v_charge") or 0) > DOCK_VOLTS
+        except (TypeError, ValueError):
+            return False
 
     @callback
     def _update(self) -> None:
