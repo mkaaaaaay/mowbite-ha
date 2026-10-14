@@ -1264,19 +1264,19 @@ class MowbiteMap {
     if (!this.box?.width) return;
     const {pose, moving} = this.eased.at(now);
     // the mower is slow: drawn only once it moved a pixel on screen, most frames would draw it where it already is.
-    // at most every other frame on an old tablet's light card
+    // on an old tablet's light card at most 12 times a second
     const last = this.pose;
     let draw = true;
     if (moving && last && pose) {
       const k = this.k;
       const step = Math.max(Math.hypot(pose.x - last.x, pose.y - last.y) * k, Math.abs(turned(pose.heading, last.heading)) * 0.3 * k);
-      draw = step >= 1 && (!this.light || now - this.drawnAt >= 30);
+      draw = step >= 1 && (!this.light || now - this.drawnAt >= 80);
     }
     if (draw) {
       this.drawnAt = now;
       this.pose = pose;
       this.drawMower();
-      if (this.follow && pose) this.followMower();
+      if (this.follow && pose) this.followMower(this.light);
     }
     if (moving) this.wake();
   }
@@ -1288,13 +1288,29 @@ class MowbiteMap {
     if (on && this.pose) this.followMower();
   }
 
-  // like the app: the mower in the middle of a window a few metres wide, as big as it was zoomed to the last time
-  followMower() {
+  // like the app: the mower in the middle of a window a few metres wide, as big as it was zoomed to the last time.
+  // lazy (an old tablet's light card): moving the view repaints the whole map, so it only moves, in one step, once
+  // the mower is well off the middle, and puts it a little behind the middle so it has room ahead
+  followMower(lazy = false) {
     if (!this.view) return;
-    const w = this.windowed ? this.view.w : this.followSpan;
-    const h = this.windowed ? this.view.h : this.followSpan;
+    const v = this.view;
+    const w = this.windowed ? v.w : this.followSpan;
+    const h = this.windowed ? v.h : this.followSpan;
+    const x = this.pose.x;
+    const y = -this.pose.y;
+    if (lazy && this.windowed) {
+      const dx = x - (v.x + v.w / 2);
+      const dy = y - (v.y + v.h / 2);
+      if (Math.abs(dx) < w * 0.3 && Math.abs(dy) < h * 0.3) return;
+      // ahead in the direction it drives (svg y points down)
+      const ahead = Math.min(w, h) * 0.2;
+      const hx = Math.cos(this.pose.heading) * ahead;
+      const hy = -Math.sin(this.pose.heading) * ahead;
+      this.setView({x: x + hx - w / 2, y: y + hy - h / 2, w, h});
+      return;
+    }
     this.windowed = true;
-    this.setView({x: this.pose.x - w / 2, y: -this.pose.y - h / 2, w, h});
+    this.setView({x: x - w / 2, y: y - h / 2, w, h});
   }
 
   fit() {

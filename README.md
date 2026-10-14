@@ -82,7 +82,7 @@ map: integration   # integration, app, auto (while it drives), always or never
 map_height: 260    # pixels, leave it out for a square map like in the app
 status: true       # false shows only the map
 theme: frost       # frost (frosted glass), dark, light or auto (like Home Assistant)
-blur: true         # false is lighter for older tablets
+blur: true         # false is lighter for older tablets: no blur, and the map follows the mower in steps
 ```
 
 The map zooms with the buttons, the mouse wheel or two fingers, and moves when dragged. While the mower drives the
