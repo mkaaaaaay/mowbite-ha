@@ -48,14 +48,29 @@
       },
       "rain": {
         "name": "Regen"
+      },
+      "schedule": {
+        "name": "Zeitplan"
       }
     },
     "button": {
+      "mow_leftovers": {
+        "name": "Reste mähen"
+      },
+      "reset_angle": {
+        "name": "Bahnwinkel zurücksetzen"
+      },
       "reset_emergency": {
         "name": "Notaus zurücksetzen"
       },
+      "reset_job": {
+        "name": "Unterbrochenen Job verwerfen"
+      },
       "skip_area": {
         "name": "Fläche überspringen"
+      },
+      "skip_path": {
+        "name": "Bahn überspringen"
       },
       "snooze_hour": {
         "name": "Benachrichtigungen 1 h pausieren"
@@ -93,9 +108,93 @@
         }
       }
     },
+    "number": {
+      "planner_obstacle_passes": {
+        "name": "Runden um Hindernisse"
+      },
+      "planner_overlap": {
+        "name": "Bahnüberlappung"
+      },
+      "planner_perimeter_passes": {
+        "name": "Randrunden"
+      },
+      "planner_turn_radius": {
+        "name": "Wenderadius"
+      }
+    },
+    "select": {
+      "planner_angle_strategy": {
+        "name": "Bahnwinkel",
+        "state": {
+          "longest_edge": "Entlang der längsten Kante",
+          "min_width": "Wenigste Bahnen",
+          "optimal": "Optimal"
+        }
+      },
+      "planner_fill_pattern": {
+        "name": "Füllmuster",
+        "state": {
+          "lanes": "Bahnen",
+          "crosshatch": "Kreuzschraffur",
+          "concentric": "Konzentrisch"
+        }
+      },
+      "planner_lane_order": {
+        "name": "Bahnreihenfolge",
+        "state": {
+          "snake": "Nacheinander",
+          "skip": "Jede zweite Bahn"
+        }
+      },
+      "planner_perimeter_direction": {
+        "name": "Richtung der Randrunden",
+        "state": {
+          "auto": "Automatisch",
+          "ccw": "Gegen den Uhrzeigersinn",
+          "cw": "Im Uhrzeigersinn"
+        }
+      },
+      "planner_perimeter_order": {
+        "name": "Randrunden",
+        "state": {
+          "first": "Vor den Bahnen",
+          "last": "Nach den Bahnen"
+        }
+      },
+      "planner_route_order": {
+        "name": "Flächenreihenfolge",
+        "state": {
+          "nearest": "Nächste zuerst",
+          "optimized": "Optimiert"
+        }
+      }
+    },
     "sensor": {
+      "app_version": {
+        "name": "MowBite-Version"
+      },
+      "area_progress": {
+        "name": "Fortschritt Fläche"
+      },
+      "area_time_left": {
+        "name": "Restzeit Fläche"
+      },
       "battery_voltage": {
         "name": "Akkuspannung"
+      },
+      "blade_time_per_charge": {
+        "name": "Längste Messerlaufzeit pro Akkuladung",
+        "state_attributes": {
+          "lowest_voltage": {
+            "name": "Niedrigste Spannung"
+          },
+          "run_end": {
+            "name": "Lauf endete"
+          }
+        }
+      },
+      "booted": {
+        "name": "Gestartet"
       },
       "charge_current": {
         "name": "Ladestrom"
@@ -103,11 +202,54 @@
       "charge_voltage": {
         "name": "Ladespannung"
       },
+      "cpu_temperature": {
+        "name": "CPU-Temperatur"
+      },
+      "current_area": {
+        "name": "Aktuelle Fläche"
+      },
+      "disk_free": {
+        "name": "Freier Speicherplatz"
+      },
       "gps_quality": {
         "name": "GPS-Qualität"
       },
+      "job_duration": {
+        "name": "Dauer für alle Flächen"
+      },
+      "job_time_left": {
+        "name": "Restzeit"
+      },
+      "last_problem": {
+        "name": "Letztes Problem",
+        "state_attributes": {
+          "time": {
+            "name": "Zeit"
+          },
+          "type": {
+            "name": "Art"
+          },
+          "severity": {
+            "name": "Schwere"
+          }
+        }
+      },
+      "lawn_area": {
+        "name": "Rasenfläche"
+      },
       "left_esc_temperature": {
         "name": "Temperatur Motorregler links"
+      },
+      "leftovers": {
+        "name": "Ungemäht",
+        "state_attributes": {
+          "areas": {
+            "name": "Flächen"
+          }
+        }
+      },
+      "memory_free": {
+        "name": "Freier Arbeitsspeicher"
       },
       "mow_esc_temperature": {
         "name": "Temperatur Motorregler Mähmotor"
@@ -130,6 +272,27 @@
       "right_esc_temperature": {
         "name": "Temperatur Motorregler rechts"
       },
+      "schedule_skipped": {
+        "name": "Zuletzt ausgelassener Start",
+        "state": {
+          "rain": "Regen",
+          "forecast": "Regenvorhersage",
+          "dark": "Dunkel",
+          "battery": "Akku zu leer",
+          "busy": "Beschäftigt",
+          "offline": "Mäher nicht erreichbar",
+          "emergency": "Notaus",
+          "paused": "Pausiert"
+        },
+        "state_attributes": {
+          "time": {
+            "name": "Zeit"
+          }
+        }
+      },
+      "schedule_started": {
+        "name": "Letzter Start nach Zeitplan"
+      },
       "state": {
         "name": "Zustand",
         "state": {
@@ -140,11 +303,28 @@
           "paused": "Pausiert",
           "undocking": "Verlässt das Dock"
         }
+      },
+      "tightest_place": {
+        "name": "Engste Stelle am Rand",
+        "state_attributes": {
+          "places": {
+            "name": "Stellen"
+          }
+        }
       }
     },
     "switch": {
       "notifications": {
         "name": "Benachrichtigungen"
+      },
+      "planner_body_fit": {
+        "name": "Körper innerhalb halten"
+      },
+      "planner_leftovers_auto": {
+        "name": "Reste selbst nachmähen"
+      },
+      "planner_mop_up": {
+        "name": "Nachputzen"
       }
     }
   },
@@ -154,6 +334,12 @@
     },
     "not_connected": {
       "message": "Keine Verbindung zum Mäher."
+    },
+    "only_idle": {
+      "message": "Nur möglich, während der Mäher nichts tut."
+    },
+    "planner_failed": {
+      "message": "Der Planer hat es nicht übernommen."
     }
   },
   "options": {

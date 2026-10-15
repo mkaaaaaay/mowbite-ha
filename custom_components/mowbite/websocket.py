@@ -72,6 +72,7 @@ class Feed:
         self._settings = -1
         self._track = -1
         self._points = 0
+        self._planning = -1
 
     def next(self) -> dict[str, Any]:
         data = self._data
@@ -83,6 +84,10 @@ class Feed:
         if data.app.version != self._settings:
             self._settings = data.app.version
             out["settings"] = data.app.data
+        planning = data.planning
+        if planning.version != self._planning:
+            self._planning = planning.version
+            out["planning"] = planning.card()
         track = mower.track
         if track.generation != self._track:
             self._track = track.generation
@@ -92,6 +97,28 @@ class Feed:
             out["track"] = {"reset": False, "points": track.points[self._points :]}
             self._points = len(track.points)
         return out
+
+
+# the planner's settings that are the card's mower sizes
+_PLANNER_SIZES = {
+    "width": "robot_width",
+    "front": "robot_front",
+    "rear": "robot_rear",
+    "blade": "mower_width",
+    "bladeAhead": "blade_ahead",
+    "bladeOffset": "blade_offset",
+}
+
+
+def planner_sizes(settings: dict[str, Any] | None) -> dict[str, float] | None:
+    """The mower's sizes as the planner has them (measured on the mower), None without all of them."""
+    sizes = {}
+    for key, name in _PLANNER_SIZES.items():
+        value = ((settings or {}).get(name) or {}).get("value")
+        if not isinstance(value, (int, float)):
+            return None
+        sizes[key] = value
+    return sizes
 
 
 def snapshot(data: MowbiteData) -> dict[str, Any]:
@@ -114,6 +141,9 @@ def snapshot(data: MowbiteData) -> dict[str, Any]:
         "since": last.get("t") if current is not None and last.get("state") == current else None,
         "map_mode": data.map_mode,
         "mower_sizes": data.mower_sizes,
+        "planner_sizes": planner_sizes(data.planning.settings),
+        # where the mower is in the plan of the area, for drawing what's still to mow
+        "plan_at": [(mower.state or {}).get("current_path"), (mower.state or {}).get("current_path_index")],
         "area": mower.area if current == "MOWING" else None,
     }
 

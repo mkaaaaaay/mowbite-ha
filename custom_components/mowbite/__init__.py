@@ -20,9 +20,11 @@ from homeassistant.helpers.typing import ConfigType
 from homeassistant.util import dt as dt_util
 
 from . import websocket
-from .app import AppSettings
+from .app import AppSettings, AppStatus
 from .const import CONF_APP_URL, CONF_MAP, CONF_PREFIX, CONF_SIZES, DOMAIN
-from .mower import Mower
+from .features import ACTION, APP, Features
+from .mower import KEY_ACTIONS, Mower
+from .planning import Planning
 from .snooze import ACTION_SNOOZE_HOUR, ACTION_SNOOZE_MORNING, Snooze, next_morning
 
 PLATFORMS = [
@@ -30,6 +32,8 @@ PLATFORMS = [
     Platform.BUTTON,
     Platform.EVENT,
     Platform.LAWN_MOWER,
+    Platform.NUMBER,
+    Platform.SELECT,
     Platform.SENSOR,
     Platform.SWITCH,
 ]
@@ -50,6 +54,9 @@ class MowbiteData:
     mower: Mower
     snooze: Snooze
     app: AppSettings
+    status: AppStatus
+    features: Features
+    planning: Planning
     # when the cards show the map: as set in the app, while driving, always or never
     map_mode: str = "app"
     # the mower's sizes set here, for when the app has none
@@ -106,13 +113,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: MowbiteConfigEntry) -> b
     )
     snooze = Snooze(hass, entry.entry_id)
     await snooze.async_load()
+    features = Features(hass, entry.entry_id)
+    await features.async_load()
     app = AppSettings(hass, entry.options.get(CONF_APP_URL))
+    status = AppStatus(hass, entry.options.get(CONF_APP_URL), lambda found: features.add(APP + f for f in found))
+    planning = Planning(hass, entry, mower, features)
     entry.runtime_data = MowbiteData(
-        mower, snooze, app, entry.options.get(CONF_MAP, "app"), entry.options.get(CONF_SIZES)
+        mower,
+        snooze,
+        app,
+        status,
+        features,
+        planning,
+        entry.options.get(CONF_MAP, "app"),
+        entry.options.get(CONF_SIZES),
     )
     entry.async_on_unload(snooze.unload)
+    entry.async_on_unload(planning.start())
+
+    @callback
+    def actions() -> None:
+        # an action the mower lists at all, enabled or not, is one it has
+        features.add(ACTION + action_id for action_id in mower.actions or {})
+
+    entry.async_on_unload(mower.add_listener(KEY_ACTIONS, actions))
     # the app may be off as well, the map then has the app's default colours until it's there
     entry.async_on_unload(await app.async_start())
+    entry.async_on_unload(await status.async_start())
 
     # a mower that's off (winter, shed) isn't an error: the entities stay unavailable and it keeps trying
     entry.async_create_background_task(hass, mower.run(), f"mowbite {mower.host}")
@@ -138,6 +165,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: MowbiteConfigEntry) -> b
 
 async def async_remove_entry(hass: HomeAssistant, entry: MowbiteConfigEntry) -> None:
     """The last mower gone, the card goes from the dashboard resources too."""
+    await Features(hass, entry.entry_id).async_remove()
     if not any(other.entry_id != entry.entry_id for other in hass.config_entries.async_entries(DOMAIN)):
         await _async_card_resource(hass, None)
 

@@ -37,6 +37,8 @@ ACTION_SKIP_AREA = "mower_logic:mowing/skip_area"
 ACTION_RESET_EMERGENCY = "mower_logic/reset_emergency"
 # drops an interrupted job, only there while idle with one (needs an OpenMower that has it)
 ACTION_RESET_JOB = "mower_logic:idle/reset_job"
+# skips the rest of the path or outline loop it's on (needs an OpenMower that has it)
+ACTION_SKIP_PATH = "mower_logic:mowing/skip_path"
 
 # keys listeners can ask for, sensors are "sensor:<id>"
 KEY_STATE = "state"
@@ -211,6 +213,9 @@ class Mower:
         # the newest STATE event (since when the state holds) and the area being mowed, from the events
         self.last_state_event: dict[str, Any] | None = None
         self.area: str | None = None
+        self.area_id: str | None = None
+        # the areas each job got to, from the AREA events (the job's own id from position/json)
+        self.job_areas: dict[str, list[str]] = {}
         # where the mower is, from position/json: x, y, heading and its job and blades
         self.position: dict[str, Any] | None = None
         self.map: dict[str, Any] | None = None
@@ -252,6 +257,10 @@ class Mower:
         """Called whenever anything changes, the mower comes or goes or the entry is unloaded."""
         self._change_listeners.append(listener)
         return lambda: self._change_listeners.remove(listener)
+
+    def notify(self, key: str) -> None:
+        """Tells whoever listens to that key, for what's kept next to the mower (plans, the app's status)."""
+        self._notify(key)
 
     def close(self) -> None:
         """The entry is going away, whoever still listens has to look for the new one."""
@@ -456,9 +465,22 @@ class Mower:
                 self.area = None
         elif event["type"] == "AREA":
             self.area = event.get("area_name") or None
+            self.area_id = event.get("area_id") or None
+            self.add_job_area(event.get("job_id"), self.area_id)
         for listener in list(self._event_listeners):
             listener(event)
         self._changed()
+
+    def add_job_area(self, job_id: Any, area_id: str | None) -> None:
+        """An area the job got to, from an AREA event now or one recorded before."""
+        if not isinstance(job_id, str) or not job_id or not area_id:
+            return
+        areas = self.job_areas.setdefault(job_id, [])
+        if area_id not in areas:
+            areas.append(area_id)
+        # only the newest jobs matter
+        for old in list(self.job_areas)[:-5]:
+            del self.job_areas[old]
 
     def _notify(self, key: str) -> None:
         for listener in list(self._listeners.get(key, ())):

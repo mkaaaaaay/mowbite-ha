@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 import json
+import re
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -84,3 +85,24 @@ def send(mower: Mower, topic: str, payload: Any) -> None:
     if not isinstance(payload, (str, bytes)):
         payload = json.dumps(payload)
     mower.handle(topic, payload.encode() if isinstance(payload, str) else payload)
+
+
+# the app's status endpoints, as AppStatus reads them
+APP_STATUS_PATHS = (
+    "/version.json",
+    "/cgi-bin/system",
+    "/cgi-bin/schedule?log",
+    "/cgi-bin/schedule",
+    "/cgi-bin/battery",
+)
+
+
+def app_status(aioclient_mock: Any, url: str, answers: dict[str, str] | None = None) -> None:
+    """The app's status endpoints: the given answers, a 404 for the rest (an older app has none of them)."""
+    for path in APP_STATUS_PATHS:
+        # the whole url: the mocker drops a query without a value ("?log") and would answer the schedule's for it
+        matcher = re.compile(re.escape(url + path) + "$")
+        if answers and path in answers:
+            aioclient_mock.get(matcher, text=answers[path])
+        else:
+            aioclient_mock.get(matcher, status=404)

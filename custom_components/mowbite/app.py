@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import timedelta
+import json
 import logging
+import time
 from typing import Any
 
 import aiohttp
@@ -79,3 +81,164 @@ class AppSettings:
             self.version += 1
             for listener in list(self._listeners):
                 listener()
+
+
+# what the app's container tells about the mower's computer, its schedule and its battery, plain text lines of
+# "key value ..." (docker/*.cgi in MowBite, the same since 1.3.0)
+VERSION_PATH = "/version.json"
+SYSTEM_PATH = "/cgi-bin/system"
+SCHEDULE_PATH = "/cgi-bin/schedule"
+SCHEDULE_LOG_PATH = "/cgi-bin/schedule?log"
+BATTERY_PATH = "/cgi-bin/battery"
+STATUS_REFRESH = timedelta(minutes=1)
+# the slower ones every so many refreshes
+SCHEDULE_EVERY = 5
+BATTERY_EVERY = 15
+VERSION_EVERY = 60
+
+# what the schedule log says when it didn't start, the reason after "skip_"
+SKIP_REASONS = ["rain", "forecast", "dark", "battery", "busy", "offline", "emergency", "paused"]
+
+
+def _lines(text: str) -> list[list[str]]:
+    return [line.split() for line in text.splitlines() if line.strip()]
+
+
+def _number(text: str) -> float | None:
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def parse_system(text: str) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for words in _lines(text):
+        if len(words) >= 2:
+            values = [_number(word) for word in words[1:]]
+            out[words[0]] = values if len(values) > 1 else values[0]
+    return out
+
+
+def parse_schedule(text: str) -> dict[str, Any]:
+    """Whether it's on and its plans, the rest of the file isn't shown anywhere."""
+    out: dict[str, Any] = {"enabled": False, "plans": 0}
+    for words in _lines(text):
+        if words[0] == "enabled" and len(words) >= 2:
+            out["enabled"] = words[1] == "1"
+        elif words[0] == "plan":
+            out["plans"] += 1
+    return out
+
+
+def parse_schedule_log(text: str) -> dict[str, Any]:
+    """The newest start and the newest time it didn't start, with why."""
+    out: dict[str, Any] = {"started": None, "skipped": None, "skip_reason": None}
+    for words in _lines(text):
+        t = _number(words[0])
+        if t is None or len(words) < 2:
+            continue
+        if words[1] == "started":
+            out["started"] = t
+        elif words[1].startswith("skip_"):
+            out["skipped"] = t
+            out["skip_reason"] = words[1][len("skip_") :]
+    return out
+
+
+# how far back the longest run counts (seconds)
+BATTERY_WINDOW = 30 * 86400
+
+
+def parse_battery(text: str, now: float) -> dict[str, Any]:
+    """The longest run of the last 30 days: how long the blade ran on one charge, and the voltage it went down to.
+    Most runs end before the battery is empty (the job's done, rain), the longest is what a charge lasts, and it gets
+    shorter as the battery ages"""
+    out: dict[str, Any] = {"blade_minutes": None, "run_end": None, "low_voltage": None}
+    for words in _lines(text):
+        if words[0] != "run" or len(words) < 6:
+            continue
+        minutes, end = _number(words[3]), _number(words[2])
+        if not minutes or end is None or now - end > BATTERY_WINDOW:
+            continue
+        if out["blade_minutes"] is None or minutes > out["blade_minutes"]:
+            out.update(blade_minutes=minutes, run_end=end, low_voltage=_number(words[5]))
+    return out
+
+
+class AppStatus:
+    """The app's status endpoints, read every minute (the slower ones less often), nothing without an address."""
+
+    def __init__(self, hass: HomeAssistant, url: str | None, found: Callable[[list[str]], None]) -> None:
+        self._hass = hass
+        self._url = url.rstrip("/") if url else None
+        # called with the endpoints that answered, they're features
+        self._found = found
+        self.version: str | None = None
+        self.system: dict[str, Any] | None = None
+        self.schedule: dict[str, Any] | None = None
+        self.schedule_log: dict[str, Any] | None = None
+        self.battery: dict[str, Any] | None = None
+        self._round = 0
+        self._listeners: list[Callable[[], None]] = []
+
+    def add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
+        self._listeners.append(listener)
+        return lambda: self._listeners.remove(listener)
+
+    async def async_start(self) -> Callable[[], None]:
+        """Reads them soon and every minute, returns how to stop. Not waited for: five addresses that don't answer
+        would hold up the start"""
+        if not self._url:
+            return lambda: None
+        self._refresh(None)
+        return async_track_time_interval(self._hass, self._refresh, STATUS_REFRESH)
+
+    @callback
+    def _refresh(self, _now: Any) -> None:
+        self._hass.async_create_task(self.async_refresh(), eager_start=True)
+
+    async def _get(self, path: str) -> str | None:
+        try:
+            async with async_get_clientsession(self._hass).get(
+                f"{self._url}{path}", timeout=aiohttp.ClientTimeout(total=10)
+            ) as response:
+                if response.status != 200:
+                    return None
+                return await response.text()
+        except (aiohttp.ClientError, TimeoutError, UnicodeDecodeError):
+            return None
+
+    async def async_refresh(self) -> None:
+        found: list[str] = []
+        n = self._round
+        self._round += 1
+        if n % VERSION_EVERY == 0 and (text := await self._get(VERSION_PATH)) is not None:
+            try:
+                version = json.loads(text).get("version")
+            except (ValueError, AttributeError):
+                version = None
+            if isinstance(version, str):
+                self.version = version
+                found.append("version")
+        system = parse_system(text) if (text := await self._get(SYSTEM_PATH)) is not None else {}
+        # the computer's values are gone with it, the others keep what they said last
+        self.system = system if "uptime" in system else None
+        if self.system is not None:
+            found.append("system")
+        if n % SCHEDULE_EVERY == 0:
+            if (text := await self._get(SCHEDULE_PATH)) is not None and text.strip():
+                self.schedule = parse_schedule(text)
+                found.append("schedule")
+            if (text := await self._get(SCHEDULE_LOG_PATH)) is not None:
+                self.schedule_log = parse_schedule_log(text)
+                found.append("schedule_log")
+        if n % BATTERY_EVERY == 0 and (text := await self._get(BATTERY_PATH)) is not None:
+            battery = parse_battery(text, time.time())
+            if battery["blade_minutes"] is not None:
+                self.battery = battery
+                found.append("battery")
+        if found:
+            self._found(found)
+        for listener in list(self._listeners):
+            listener()

@@ -740,6 +740,38 @@ const MAP_STYLE = `
     stroke-dasharray: 4 4;
   }
 
+  /* what's still to mow of the area, thin under the track */
+  .planLane,
+  .planOutline {
+    fill: none;
+    stroke: var(--c-swath);
+    stroke-opacity: 0.45;
+    stroke-width: 1;
+    stroke-dasharray: 2 3;
+    stroke-linejoin: round;
+  }
+
+  .planOutline {
+    stroke-opacity: 0.6;
+  }
+
+  /* left uncut in the last job */
+  .leftover {
+    fill: none;
+    stroke: var(--c-unmowed);
+    stroke-opacity: 0.85;
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .tightPlace {
+    fill: var(--c-obstacle);
+    fill-opacity: 0.8;
+    stroke: #fff;
+    stroke-width: 1;
+  }
+
   /* the strip the blade cut, as wide as the blade on the map */
   .swath path {
     vector-effect: none;
@@ -1020,8 +1052,11 @@ class MowbiteMap {
       <svg xmlns="${svgNS}" preserveAspectRatio="xMidYMid meet">
         <g class="areas"></g>
         <g class="docks"></g>
+        <g class="leftovers"></g>
+        <g class="plan"></g>
         <g class="swath"></g>
         <g class="tracks"></g>
+        <g class="tight"></g>
         <g class="mowerBodyLayer"></g>
         <g class="mowerIcon"></g>
         <g class="mowerTop"></g>
@@ -1036,6 +1071,12 @@ class MowbiteMap {
     this.areas = section.querySelector('.areas');
     this.docks = section.querySelector('.docks');
     this.tracks = section.querySelector('.tracks');
+    this.planLayer = section.querySelector('.plan');
+    this.leftoverLayer = section.querySelector('.leftovers');
+    this.tightLayer = section.querySelector('.tight');
+    // the plan drawn, and from which point of which path on: only redrawn when that moves
+    this.plan = null;
+    this.planFrom = null;
     this.swath = section.querySelector('.swath');
     this.bodyLayer = section.querySelector('.mowerBodyLayer');
     this.mower = section.querySelector('.mowerIcon');
@@ -1173,6 +1214,49 @@ class MowbiteMap {
     for (const run of touched) run.el.setAttribute('points', run.points.join(' '));
     if (update.reset) this.drawSwath();
     else this.growSwath(added);
+  }
+
+  // what's still to mow of the area being mowed: its plan from where the mower is on, the rest of the path it's on
+  // and the paths after it. at is robot_state's [current_path, current_path_index] (the pose in the path)
+  setPlan(plan, at) {
+    let from = null;
+    if (plan && Array.isArray(at) && at[0] >= 0 && at[0] < plan.paths.length) {
+      const index = plan.paths[at[0]].pose_index;
+      let point = 0;
+      if (index.length) {
+        while (point < index.length - 1 && index[point + 1] <= at[1]) point++;
+      }
+      from = `${at[0]}:${point}`;
+    }
+    if (plan === this.plan && from === this.planFrom) return;
+    this.plan = plan;
+    this.planFrom = from;
+    if (!from) {
+      this.planLayer.innerHTML = '';
+      return;
+    }
+    const [path, point] = from.split(':').map(Number);
+    this.planLayer.innerHTML = plan.paths
+      .slice(path)
+      .map((p, i) => {
+        const points = (i === 0 ? p.points.slice(point) : p.points).map(([x, y]) => `${x},${-y}`).join(' ');
+        return points ? `<polyline class="${p.outline ? 'planOutline' : 'planLane'}" points="${points}"/>` : '';
+      })
+      .join('');
+  }
+
+  // what the last job left uncut, as the planner found it
+  setLeftovers(paths) {
+    this.leftoverLayer.innerHTML = (paths ?? [])
+      .map((points) => `<polyline class="leftover" points="${points.map(([x, y]) => `${x},${-y}`).join(' ')}"/>`)
+      .join('');
+  }
+
+  // where the body came too close to an edge in the last job
+  setTight(places) {
+    this.tightLayer.innerHTML = (places ?? [])
+      .map(([x, y]) => `<circle class="tightPlace" cx="${x}" cy="${-y}" r="0.06"/>`)
+      .join('');
   }
 
   // the mower's sizes, from the app or the integration, null without them
@@ -1667,8 +1751,15 @@ class MowbiteCard extends HTMLElement {
       this._applyLook();
       this._map?.setIcons(this._settings.icons);
     }
-    this._body = bodyFrom(this._settings?.mower) ?? bodyFrom(data.mower_sizes);
+    // the app's sizes, the planner's (measured on the mower), the ones set in the integration
+    this._body = bodyFrom(this._settings?.mower) ?? bodyFrom(data.planner_sizes) ?? bodyFrom(data.mower_sizes);
     this._map?.setBody(this._body);
+    if ('planning' in data) {
+      this._planning = data.planning;
+      this._map?.setLeftovers(data.planning.leftovers);
+      this._map?.setTight(data.planning.tight);
+    }
+    this._map?.setPlan(this._planning?.plan ?? null, data.plan_at);
     if (data.track) {
       // the whole track again after a reset, otherwise only the new points
       if (data.track.reset || !this._track) this._track = {reset: true, points: [...data.track.points]};
@@ -1801,6 +1892,11 @@ class MowbiteCard extends HTMLElement {
     this._map.setBody(this._body ?? null);
     if (this._mapData) this._map.setMap(this._mapData);
     if (this._track) this._map.setTrack(this._track);
+    if (this._planning) {
+      this._map.setLeftovers(this._planning.leftovers);
+      this._map.setTight(this._planning.tight);
+      this._map.setPlan(this._planning.plan ?? null, this._data?.plan_at);
+    }
     this._applyLook();
     this._update();
   }

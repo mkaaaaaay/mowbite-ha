@@ -1,4 +1,4 @@
-"""Notifications on or off."""
+"""Notifications on or off, and the planner's on/off settings."""
 
 from __future__ import annotations
 
@@ -10,9 +10,16 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import MowbiteConfigEntry
-from .entity import MowbiteEntity
+from .entity import MowbiteEntity, async_add_when_there
+from .features import RPC
+from .planner_setting import MowbitePlannerSetting
+from .planning import SETTINGS
 
 PARALLEL_UPDATES = 0
+
+# the planner's settings, and whether each is on from the start. leftovers_auto sends the mower out again by itself
+# after a job for what it left
+PLANNER_SWITCHES = {"leftovers_auto": True, "mop_up": False, "body_fit": False}
 
 
 async def async_setup_entry(
@@ -21,6 +28,14 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     async_add_entities([MowbiteNotificationsSwitch(entry)])
+    async_add_when_there(
+        entry,
+        async_add_entities,
+        [
+            (RPC + SETTINGS, lambda setting=setting: MowbitePlannerSwitch(entry, setting))
+            for setting in PLANNER_SWITCHES
+        ],
+    )
 
 
 class MowbiteNotificationsSwitch(MowbiteEntity, SwitchEntity):
@@ -51,3 +66,21 @@ class MowbiteNotificationsSwitch(MowbiteEntity, SwitchEntity):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         self.snooze.turn_off()
+
+
+class MowbitePlannerSwitch(MowbitePlannerSetting, SwitchEntity):
+    def __init__(self, entry: MowbiteConfigEntry, setting: str) -> None:
+        super().__init__(entry, setting)
+        self._attr_translation_key = f"planner_{setting}"
+        self._attr_entity_registry_enabled_default = PLANNER_SWITCHES[setting]
+
+    @property
+    def is_on(self) -> bool | None:
+        value = self.setting_value
+        return value if isinstance(value, bool) else None
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self.async_set_setting(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self.async_set_setting(False)

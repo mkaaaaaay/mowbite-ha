@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
+
 from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import MowbiteConfigEntry
 from .const import DOMAIN
@@ -41,3 +44,28 @@ class MowbiteEntity(Entity):
     @callback
     def _update(self) -> None:
         self.async_write_ha_state()
+
+
+@callback
+def async_add_when_there(
+    entry: MowbiteConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
+    entities: Iterable[tuple[str | tuple[str, ...], Callable[[], Entity]]],
+) -> None:
+    """Adds each entity once the mower or the app has what it needs (a feature, or any of several), so nothing
+    shows that this mower can't do. Seen once, a feature stays"""
+    features = entry.runtime_data.features
+    waiting = list(entities)
+
+    @callback
+    def check() -> None:
+        ready = [item for item in waiting if features.has(item[0])]
+        if not ready:
+            return
+        for item in ready:
+            waiting.remove(item)
+        async_add_entities([make() for _, make in ready])
+
+    check()
+    if waiting:
+        entry.async_on_unload(features.add_listener(check))

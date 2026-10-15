@@ -48,14 +48,29 @@
       },
       "rain": {
         "name": "Rain"
+      },
+      "schedule": {
+        "name": "Schedule"
       }
     },
     "button": {
+      "mow_leftovers": {
+        "name": "Mow leftovers"
+      },
+      "reset_angle": {
+        "name": "Reset lane angle"
+      },
       "reset_emergency": {
         "name": "Reset emergency stop"
       },
+      "reset_job": {
+        "name": "Drop interrupted job"
+      },
       "skip_area": {
         "name": "Skip area"
+      },
+      "skip_path": {
+        "name": "Skip path"
       },
       "snooze_hour": {
         "name": "Pause notifications for 1 h"
@@ -93,9 +108,93 @@
         }
       }
     },
+    "number": {
+      "planner_obstacle_passes": {
+        "name": "Loops around obstacles"
+      },
+      "planner_overlap": {
+        "name": "Lane overlap"
+      },
+      "planner_perimeter_passes": {
+        "name": "Outline loops"
+      },
+      "planner_turn_radius": {
+        "name": "Turn radius"
+      }
+    },
+    "select": {
+      "planner_angle_strategy": {
+        "name": "Lane angle",
+        "state": {
+          "longest_edge": "Along the longest edge",
+          "min_width": "Fewest lanes",
+          "optimal": "Optimal"
+        }
+      },
+      "planner_fill_pattern": {
+        "name": "Fill pattern",
+        "state": {
+          "lanes": "Lanes",
+          "crosshatch": "Crosshatch",
+          "concentric": "Concentric"
+        }
+      },
+      "planner_lane_order": {
+        "name": "Lane order",
+        "state": {
+          "snake": "One after the other",
+          "skip": "Every other lane"
+        }
+      },
+      "planner_perimeter_direction": {
+        "name": "Outline direction",
+        "state": {
+          "auto": "Automatic",
+          "ccw": "Counterclockwise",
+          "cw": "Clockwise"
+        }
+      },
+      "planner_perimeter_order": {
+        "name": "Outline loops",
+        "state": {
+          "first": "Before the lanes",
+          "last": "After the lanes"
+        }
+      },
+      "planner_route_order": {
+        "name": "Area order",
+        "state": {
+          "nearest": "Nearest first",
+          "optimized": "Optimized"
+        }
+      }
+    },
     "sensor": {
+      "app_version": {
+        "name": "MowBite version"
+      },
+      "area_progress": {
+        "name": "Area progress"
+      },
+      "area_time_left": {
+        "name": "Area time left"
+      },
       "battery_voltage": {
         "name": "Battery voltage"
+      },
+      "blade_time_per_charge": {
+        "name": "Longest blade time per charge",
+        "state_attributes": {
+          "lowest_voltage": {
+            "name": "Lowest voltage"
+          },
+          "run_end": {
+            "name": "Run ended"
+          }
+        }
+      },
+      "booted": {
+        "name": "Started"
       },
       "charge_current": {
         "name": "Charge current"
@@ -103,11 +202,54 @@
       "charge_voltage": {
         "name": "Charge voltage"
       },
+      "cpu_temperature": {
+        "name": "CPU temperature"
+      },
+      "current_area": {
+        "name": "Current area"
+      },
+      "disk_free": {
+        "name": "Free storage"
+      },
       "gps_quality": {
         "name": "GPS quality"
       },
+      "job_duration": {
+        "name": "Duration for all areas"
+      },
+      "job_time_left": {
+        "name": "Time left"
+      },
+      "last_problem": {
+        "name": "Last problem",
+        "state_attributes": {
+          "time": {
+            "name": "Time"
+          },
+          "type": {
+            "name": "Type"
+          },
+          "severity": {
+            "name": "Severity"
+          }
+        }
+      },
+      "lawn_area": {
+        "name": "Lawn area"
+      },
       "left_esc_temperature": {
         "name": "Left motor controller temperature"
+      },
+      "leftovers": {
+        "name": "Left uncut",
+        "state_attributes": {
+          "areas": {
+            "name": "Areas"
+          }
+        }
+      },
+      "memory_free": {
+        "name": "Free memory"
       },
       "mow_esc_temperature": {
         "name": "Mow motor controller temperature"
@@ -130,6 +272,27 @@
       "right_esc_temperature": {
         "name": "Right motor controller temperature"
       },
+      "schedule_skipped": {
+        "name": "Last skipped start",
+        "state": {
+          "rain": "Rain",
+          "forecast": "Rain forecast",
+          "dark": "Dark",
+          "battery": "Battery low",
+          "busy": "Busy",
+          "offline": "Mower offline",
+          "emergency": "Emergency stop",
+          "paused": "Paused"
+        },
+        "state_attributes": {
+          "time": {
+            "name": "Time"
+          }
+        }
+      },
+      "schedule_started": {
+        "name": "Last scheduled start"
+      },
       "state": {
         "name": "State",
         "state": {
@@ -140,11 +303,28 @@
           "paused": "Paused",
           "undocking": "Leaving the dock"
         }
+      },
+      "tightest_place": {
+        "name": "Closest to an edge",
+        "state_attributes": {
+          "places": {
+            "name": "Places"
+          }
+        }
       }
     },
     "switch": {
       "notifications": {
         "name": "Notifications"
+      },
+      "planner_body_fit": {
+        "name": "Keep the body inside"
+      },
+      "planner_leftovers_auto": {
+        "name": "Mow leftovers by itself"
+      },
+      "planner_mop_up": {
+        "name": "Mop up"
       }
     }
   },
@@ -154,6 +334,12 @@
     },
     "not_connected": {
       "message": "Not connected to the mower."
+    },
+    "only_idle": {
+      "message": "Only while the mower is idle."
+    },
+    "planner_failed": {
+      "message": "The planner didn't take it."
     }
   },
   "options": {

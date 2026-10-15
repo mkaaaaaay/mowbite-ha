@@ -17,6 +17,18 @@ mower's MQTT broker directly, no cloud and no extra add-on.
   idle, not as docked, so an automation for "docked" only fires in the dock.
 - **Buttons** for skipping an area and for resetting an emergency stop. The reset is off by default, an
   emergency stop has a reason out at the mower.
+- **How far it got**: the area being mowed, how far through it is, the last problem the mower had (a docking
+  retry, GPS lost, an emergency stop) and the lawn's area.
+- **Only what your mower has**: the entities below come once the mower or the app first provides the data, and
+  stay after that, also while the mower is off for the winter. Nothing shows that your mower can't do.
+  - Skip the rest of a path, drop an interrupted job (newer OpenMower)
+  - The time left for the area and the whole job, how long mowing all areas takes, the area left uncut after a
+    job with a button to mow just that, the place where the mower came closest to an edge, and the planning
+    settings (fill pattern, outline loops, mow the leftovers by itself and more), changed only while the mower is
+    idle (with the MowBite Planner on the mower)
+  - The MowBite version, the mower computer's CPU temperature, free memory and storage, whether the schedule is
+    on, its last start and the last start it left out (rain, dark, battery low, ...), and the longest blade time
+    on one charge in the last 30 days, which gets shorter as the battery ages (with the MowBite address set)
 - **Events** for automations and notifications: all areas done, heading home (with the reason: battery, rain,
   mow motor too hot or sent home), docked, left the dock, docking retry, docking or undocking failed,
   navigation error, mow motor didn't start, GPS lost while mowing, emergency stop and cleared, fully charged,
@@ -30,11 +42,14 @@ mower's MQTT broker directly, no cloud and no extra add-on.
   colours, icons and icon sizes you picked in the app.
 - **The mower at its real size**: with the mower's sizes known the map draws its outline with the blade, and along
   the track the strip the blade really cut.
+- **What's still to mow**: while mowing, the map shows the rest of the area's plan as a thin dashed line, after a
+  job what was left uncut and the places the mower came too close to an edge.
 
 ![The card on a phone](images/phone.png)
 
 What it reads is what OpenMower publishes on MQTT: `robot_state`, `actions`, `sensors`, `events`,
-`position` and `map`. The track of a job that was already running when Home Assistant started comes from the
+`position` and `map`, and over the mower's rpc its plans and event history, asked when something changes (an area
+starts, the mower docks, the map changes), never polled. The track of a job that was already running when Home Assistant started comes from the
 mower's position history (OpenMower 1.3 and newer). An emergency stop is told once it has lasted 10 seconds,
 like MowBite's own notifications do it, and a navigation error only when the mower doesn't head home right
 after it (OpenMower reports one when it's sent home in the middle of a path).
@@ -69,7 +84,7 @@ Under **Configure** on the integration:
   or never. A card can still have its own setting.
 - **Mower sizes**: for the mower's outline and the strip its blade cuts on the map. Pick your mower, or Own sizes
   for a form like the one in the MowBite app (in cm, from the middle between the rear drive wheels). Sizes set in
-  the MowBite app come first.
+  the MowBite app come first, then the ones the MowBite Planner has, then these.
 
 ## The card
 

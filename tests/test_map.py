@@ -19,7 +19,7 @@ from homeassistant.util import dt as dt_util
 from custom_components.mowbite.const import CONF_APP_URL, CONF_MAP, CONF_MOWER, CONF_SIZES, MOWER_MODELS
 from custom_components.mowbite.mower import Mower, RpcError, Track, _history
 
-from .conftest import send
+from .conftest import app_status, send
 
 MOWER = "lawn_mower.openmower"
 MAP = {
@@ -163,6 +163,7 @@ async def test_app_settings(
     no_connection: None,
 ) -> None:
     aioclient_mock.get("http://openmower:8082/cgi-bin/settings", json=SETTINGS)
+    app_status(aioclient_mock, "http://openmower:8082")
     entry.add_to_hass(hass)
     hass.config_entries.async_update_entry(entry, options={CONF_APP_URL: "http://openmower:8082"})
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -183,6 +184,8 @@ async def test_app_settings(
 async def test_options(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, entry: MockConfigEntry, no_connection: None) -> None:
     aioclient_mock.get("http://openmower:8082/cgi-bin/settings", json=SETTINGS)
     aioclient_mock.get("http://nothing:8082/cgi-bin/settings", status=404)
+    app_status(aioclient_mock, "http://openmower:8082")
+    app_status(aioclient_mock, "http://nothing:8082")
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()

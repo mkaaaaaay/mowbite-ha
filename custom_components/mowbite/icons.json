@@ -1,11 +1,28 @@
 {
   "entity": {
+    "binary_sensor": {
+      "schedule": {
+        "default": "mdi:calendar-clock"
+      }
+    },
     "button": {
+      "mow_leftovers": {
+        "default": "mdi:texture-box"
+      },
+      "reset_angle": {
+        "default": "mdi:angle-acute"
+      },
       "reset_emergency": {
         "default": "mdi:alert-octagon-outline"
       },
+      "reset_job": {
+        "default": "mdi:playlist-remove"
+      },
       "skip_area": {
         "default": "mdi:skip-next"
+      },
+      "skip_path": {
+        "default": "mdi:debug-step-over"
       },
       "snooze_hour": {
         "default": "mdi:bell-sleep"
@@ -19,9 +36,82 @@
         "default": "mdi:robot-mower-outline"
       }
     },
+    "number": {
+      "planner_obstacle_passes": {
+        "default": "mdi:vector-circle"
+      },
+      "planner_overlap": {
+        "default": "mdi:set-center"
+      },
+      "planner_perimeter_passes": {
+        "default": "mdi:vector-square"
+      },
+      "planner_turn_radius": {
+        "default": "mdi:u-turn-left"
+      }
+    },
+    "select": {
+      "planner_angle_strategy": {
+        "default": "mdi:angle-acute"
+      },
+      "planner_fill_pattern": {
+        "default": "mdi:texture"
+      },
+      "planner_lane_order": {
+        "default": "mdi:format-list-numbered"
+      },
+      "planner_perimeter_direction": {
+        "default": "mdi:rotate-right"
+      },
+      "planner_perimeter_order": {
+        "default": "mdi:vector-square"
+      },
+      "planner_route_order": {
+        "default": "mdi:routes"
+      }
+    },
     "sensor": {
+      "app_version": {
+        "default": "mdi:information-outline"
+      },
+      "area_progress": {
+        "default": "mdi:progress-check"
+      },
+      "area_time_left": {
+        "default": "mdi:timer-sand"
+      },
+      "blade_time_per_charge": {
+        "default": "mdi:battery-clock"
+      },
+      "booted": {
+        "default": "mdi:restart"
+      },
+      "current_area": {
+        "default": "mdi:map-marker-radius"
+      },
+      "disk_free": {
+        "default": "mdi:harddisk"
+      },
       "gps_quality": {
         "default": "mdi:crosshairs-gps"
+      },
+      "job_duration": {
+        "default": "mdi:timer-outline"
+      },
+      "job_time_left": {
+        "default": "mdi:timer-sand"
+      },
+      "last_problem": {
+        "default": "mdi:alert-circle-outline"
+      },
+      "lawn_area": {
+        "default": "mdi:grass"
+      },
+      "leftovers": {
+        "default": "mdi:texture-box"
+      },
+      "memory_free": {
+        "default": "mdi:memory"
       },
       "mow_motor_speed": {
         "default": "mdi:saw-blade"
@@ -32,6 +122,12 @@
       "position_accuracy": {
         "default": "mdi:map-marker-radius"
       },
+      "schedule_skipped": {
+        "default": "mdi:calendar-remove"
+      },
+      "schedule_started": {
+        "default": "mdi:calendar-check"
+      },
       "state": {
         "default": "mdi:robot-mower",
         "state": {
@@ -41,6 +137,9 @@
           "paused": "mdi:pause-circle-outline",
           "undocking": "mdi:home-export-outline"
         }
+      },
+      "tightest_place": {
+        "default": "mdi:arrow-collapse-horizontal"
       }
     },
     "switch": {
@@ -49,6 +148,15 @@
         "state": {
           "off": "mdi:bell-off"
         }
+      },
+      "planner_body_fit": {
+        "default": "mdi:robot-mower-outline"
+      },
+      "planner_leftovers_auto": {
+        "default": "mdi:texture-box"
+      },
+      "planner_mop_up": {
+        "default": "mdi:broom"
       }
     }
   }
