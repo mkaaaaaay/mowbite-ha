@@ -184,8 +184,11 @@ class Planning:
         self._plans_for: int | None = None
         self._asking: set[str] = set()
         self._failed: dict[str, float] = {}
-        # area id -> the job in which the mower mows only that area's leftovers
-        self._leftover_runs: dict[str, str] = {}
+        # (job id, area id) of areas a job mows only the leftovers of, until the job ends. a job that heads home
+        # (rain, battery) and comes back starts the area again without fetching its plan anew, it stays a leftover run
+        self._leftover_runs: set[tuple[str, str]] = set()
+        # when each job left the dock first, a log line from before can't be its own
+        self._job_starts: dict[str, float] = {}
         self.leftovers: dict[str, Any] | None = None
         self.drive: dict[str, Any] | None = None
         self.settings: dict[str, Any] | None = None
@@ -266,7 +269,7 @@ class Planning:
         not in the area's plan, there's no progress or time to tell"""
         area_id = self.area_id
         job_id = (self._mower.position or {}).get("job_id")
-        return area_id is not None and job_id is not None and self._leftover_runs.get(area_id) == job_id
+        return area_id is not None and job_id is not None and (job_id, area_id) in self._leftover_runs
 
     @property
     def progress(self) -> float | None:
@@ -370,9 +373,22 @@ class Planning:
         self._features.add([EVENTS])
         self._note_problem(event)
         kind = event.get("type")
+        job_id = event.get("job_id")
+        if kind == "STATE" and event.get("state") == "UNDOCKING" and isinstance(job_id, str):
+            if isinstance(event.get("t"), (int, float)) and job_id not in self._job_starts:
+                self._job_starts[job_id] = event["t"]
+                for old in list(self._job_starts)[:-5]:
+                    del self._job_starts[old]
+        elif kind in ("JOB_COMPLETE", "JOB_RESET"):
+            self._leftover_runs = {run for run in self._leftover_runs if run[0] != job_id}
         if kind == "AREA" and event.get("area_id") and self._ready and self.plan_method:
             self._ask(self._async_plan(event["area_id"]))
-            if self.plan_method == PLANNER_PLAN and self.has(LOG) and isinstance(event.get("job_id"), str):
+            if (
+                self.plan_method == PLANNER_PLAN
+                and self.has(LOG)
+                and isinstance(job_id, str)
+                and (job_id, event["area_id"]) not in self._leftover_runs
+            ):
                 self._ask(self._async_leftover_run(event["area_id"], event["job_id"], event.get("t")))
         elif kind == "DOCKED":
             if self._after_docking is not None:
@@ -504,8 +520,9 @@ class Planning:
 
     async def _async_leftover_run(self, area_id: str, job_id: str, t: Any) -> None:
         """Whether the area started is only its leftovers, the planner's log says so when mower_logic got the plan."""
-        # the plan was fetched right before the area started, an older line would be from a job before
+        # the plan was fetched right before the area started, and not before the job left the dock
         since = (t if isinstance(t, (int, float)) else time.time()) - LEFTOVERS_BEFORE
+        since = max(since, self._job_starts.get(job_id, since))
         line = LEFTOVERS_LINE.format(area_id=area_id)
         for attempt in range(2):
             if attempt:
@@ -513,7 +530,7 @@ class Planning:
             result = await self._rpc(LOG, {"since": since, "limit": 200})
             lines = (result or {}).get("lines") if isinstance(result, dict) else None
             if any(isinstance(entry, dict) and str(entry.get("msg", "")).startswith(line) for entry in lines or []):
-                self._leftover_runs = {area_id: job_id}
+                self._leftover_runs.add((job_id, area_id))
                 self.version += 1
                 self._mower.notify(KEY_PLANNING)
                 return

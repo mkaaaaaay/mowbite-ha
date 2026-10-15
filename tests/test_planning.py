@@ -502,3 +502,55 @@ async def test_leftover_run(hass: HomeAssistant, entry: MockConfigEntry, no_conn
     )
     await hass.async_block_till_done()
     assert hass.states.get("sensor.openmower_area_progress").state == "50"
+
+
+@patch("custom_components.mowbite.planning.LEFTOVERS_RECHECK", 0)
+async def test_leftover_run_stays_for_the_job(hass: HomeAssistant, entry: MockConfigEntry, no_connection: None) -> None:
+    """Home for rain and out again starts the area anew without a new line, it's still only leftovers. A line from
+    before the job left the dock isn't its own"""
+    lines = [{"t": 95.0, "level": "INFO", "msg": "MowBite Planner: area back, the leftovers: 1 pass"}]
+    rpc = FakeRpc(
+        {
+            **PLANNER_ANSWERS,
+            "rpc.methods": [*PLANNER_ANSWERS["rpc.methods"], "planner.log"],
+            "planner.log": lambda params: {"lines": [line for line in lines if line["t"] >= params["since"]]},
+        }
+    )
+    mower = await setup_mower(hass, entry, rpc)
+    send(mower, "map/json", MAP)
+    send(mower, "position/json", {"x": 1, "y": 1, "heading": 0, "attributes": {"job_id": "j", "blades": True}})
+    mowing = {**ROBOT_STATE, "current_state": "MOWING", "current_path": 0, "current_path_index": 10}
+
+    # left the dock at 98: the line at 95 belongs to the job before
+    send(mower, "events/json", {"type": "STATE", "state": "UNDOCKING", "job_id": "j", "t": 98, "id": "s1"})
+    send(
+        mower,
+        "events/json",
+        {"type": "AREA", "area_id": "back", "area_name": "Back", "job_id": "j", "t": 100, "id": "a1"},
+    )
+    send(mower, "robot_state/json", mowing)
+    await hass.async_block_till_done()
+    assert hass.states.get("sensor.openmower_current_area").attributes["leftovers"] is False
+
+    # the front only its leftovers, then home for rain and out again: no new line, still leftovers
+    lines.append({"t": 199.5, "level": "INFO", "msg": "MowBite Planner: area front, the leftovers: 2 passes"})
+    send(
+        mower,
+        "events/json",
+        {"type": "AREA", "area_id": "front", "area_name": "Front", "job_id": "j", "t": 200, "id": "a2"},
+    )
+    send(mower, "robot_state/json", {**mowing, "current_path_index": 11})
+    await hass.async_block_till_done()
+    assert hass.states.get("sensor.openmower_current_area").attributes["leftovers"] is True
+    send(
+        mower,
+        "events/json",
+        {"type": "AREA", "area_id": "front", "area_name": "Front", "job_id": "j", "t": 900, "id": "a3"},
+    )
+    send(mower, "robot_state/json", {**mowing, "current_path_index": 12})
+    await hass.async_block_till_done()
+    assert hass.states.get("sensor.openmower_current_area").attributes["leftovers"] is True
+
+    # the job done, the flag goes with it
+    send(mower, "events/json", {"type": "JOB_COMPLETE", "job_id": "j", "t": 950, "id": "c1"})
+    assert entry.runtime_data.planning._leftover_runs == set()
