@@ -396,3 +396,57 @@ async def test_app_status(
     assert hass.states.get("sensor.openmower_last_skipped_start").state == "rain"
     # the battery's log didn't answer: no sensor for it
     assert hass.states.get("sensor.openmower_longest_blade_time_per_charge") is None
+
+
+async def test_slic3r_mode_asks_mowing_plan(hass: HomeAssistant, entry: MockConfigEntry, no_connection: None) -> None:
+    """The planner handing planning on to slic3r: mowing.plan is mower_logic's plan, planner.plan only a copy."""
+    settings = copy.deepcopy(SETTINGS)
+    settings["settings"]["planner"] = {"value": "slic3r", "type": "string", "settable": True}
+    rpc = FakeRpc(
+        {
+            **PLANNER_ANSWERS,
+            "planner.settings": settings,
+            "mowing.plan": lambda params: plan(params["area_id"]),
+        }
+    )
+    mower = await setup_mower(hass, entry, rpc)
+    send(mower, "map/json", MAP)
+    await hass.async_block_till_done()
+    asked = {method for method, _ in rpc.calls}
+    assert "mowing.plan" in asked
+    assert "planner.plan" not in asked
+    send(
+        mower,
+        "events/json",
+        {"type": "AREA", "area_id": "front", "area_name": "Front", "job_id": "j", "t": 2, "id": "a1"},
+    )
+    send(
+        mower,
+        "robot_state/json",
+        {**ROBOT_STATE, "current_state": "MOWING", "current_path": 1, "current_path_index": 100},
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get("sensor.openmower_area_progress").state == "50"
+    # no time from mowing.plan
+    assert hass.states.get("sensor.openmower_area_time_left").state == "unknown"
+
+
+async def test_mowbite_mode_never_asks_mowing_plan(
+    hass: HomeAssistant, entry: MockConfigEntry, no_connection: None
+) -> None:
+    """The planner planning itself: mowing.plan would count as mower_logic fetching its plan."""
+    rpc = FakeRpc({**PLANNER_ANSWERS, "mowing.plan": lambda params: plan(params["area_id"])})
+    mower = await setup_mower(hass, entry, rpc)
+    send(mower, "map/json", MAP)
+    send(
+        mower,
+        "events/json",
+        {"type": "AREA", "area_id": "front", "area_name": "Front", "job_id": "j", "t": 2, "id": "a1"},
+    )
+    send(
+        mower,
+        "robot_state/json",
+        {**ROBOT_STATE, "current_state": "MOWING", "current_path": 1, "current_path_index": 100},
+    )
+    await hass.async_block_till_done()
+    assert "mowing.plan" not in {method for method, _ in rpc.calls}

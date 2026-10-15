@@ -169,6 +169,8 @@ class Planning:
         self._features = features
         # the methods rpc.methods listed, None until the mower answered
         self.methods: set[str] | None = None
+        # the methods and the planner's settings are known
+        self._ready = False
         # area id -> trimmed plan, for the map as it was when they were asked
         self.plans: dict[str, dict[str, Any]] = {}
         self._plans_for: int | None = None
@@ -207,11 +209,20 @@ class Planning:
 
     @property
     def plan_method(self) -> str | None:
-        if self.has(PLANNER_PLAN):
+        """planner.plan while the MowBite Planner plans itself. Never mowing.plan then: the planner takes that for
+        mower_logic fetching its plan, the job isn't timed and prepared leftovers are gone. Planning with slic3r it
+        hands mowing.plan on to slic3r untouched, and only that is exactly mower_logic's plan"""
+        if self.has(PLANNER_PLAN) and self.planner_mode != "slic3r":
             return PLANNER_PLAN
         if self.has(PLAN):
             return PLAN
         return None
+
+    @property
+    def planner_mode(self) -> str | None:
+        """Who plans for the MowBite Planner: "mowbite" itself or "slic3r", None without its settings."""
+        value = ((self.settings or {}).get("planner") or {}).get("value")
+        return value if isinstance(value, str) else None
 
     # what the sensors show
 
@@ -323,16 +334,17 @@ class Planning:
                 self._ask(self._async_hello())
             else:
                 self.methods = None
+                self._ready = False
         if mower.map_version != self._map_version:
             self._map_version = mower.map_version
             if mow_areas(mower.map):
                 self._features.add([MAP])
             self._mower.notify(KEY_PLANNING)
-            if self.methods is not None:
+            if self._ready:
                 self._ask(self._async_plans())
         # a job running from before Home Assistant came: the area it's on is known only from robot_state
         area_id = self.area_id
-        if area_id and area_id not in self.plans and self.plan_method:
+        if area_id and area_id not in self.plans and self._ready and self.plan_method:
             self._ask(self._async_plan(area_id))
 
     @callback
@@ -340,7 +352,7 @@ class Planning:
         self._features.add([EVENTS])
         self._note_problem(event)
         kind = event.get("type")
-        if kind == "AREA" and event.get("area_id") and self.plan_method:
+        if kind == "AREA" and event.get("area_id") and self._ready and self.plan_method:
             self._ask(self._async_plan(event["area_id"]))
         elif kind == "DOCKED":
             if self._after_docking is not None:
@@ -389,7 +401,9 @@ class Planning:
             return
         self.methods = {m for m in methods if isinstance(m, str)}
         self._features.add(RPC + method for method in self.methods)
+        # which way plans are asked depends on the planner's settings, nothing is planned before they came
         await self._async_settings()
+        self._ready = True
         await self._async_history()
         await self._async_after_job()
 
@@ -398,7 +412,12 @@ class Planning:
             return
         result = await self._rpc(SETTINGS, {})
         if isinstance(result, dict) and isinstance(result.get("settings"), dict):
+            mode = self.planner_mode
             self.settings = result["settings"]
+            if self.planner_mode != mode:
+                # the plans came the other way, they're asked again
+                self.plans = {}
+                self._plans_for = None
             self._mower.notify(KEY_PLANNING)
 
     async def async_set_setting(self, name: str, value: Any) -> None:
@@ -465,7 +484,8 @@ class Planning:
 
     async def _async_after_job(self) -> None:
         """What the last job left uncut and where it came too close to an edge, once after each job. The plans too,
-        they aren't asked while mowing"""
+        they aren't asked while mowing. The settings first, they may have been changed in the app"""
+        await self._async_settings()
         await self._async_plans()
         changed = False
         if self.has(LEFTOVERS):
