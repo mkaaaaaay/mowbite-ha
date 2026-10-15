@@ -206,7 +206,12 @@
         "name": "CPU-Temperatur"
       },
       "current_area": {
-        "name": "Aktuelle Fläche"
+        "name": "Aktuelle Fläche",
+        "state_attributes": {
+          "leftovers": {
+            "name": "Nur Reste"
+          }
+        }
       },
       "disk_free": {
         "name": "Freier Speicherplatz"

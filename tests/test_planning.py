@@ -450,3 +450,55 @@ async def test_mowbite_mode_never_asks_mowing_plan(
     )
     await hass.async_block_till_done()
     assert "mowing.plan" not in {method for method, _ in rpc.calls}
+
+
+@patch("custom_components.mowbite.planning.LEFTOVERS_RECHECK", 0)
+async def test_leftover_run(hass: HomeAssistant, entry: MockConfigEntry, no_connection: None) -> None:
+    """A job mowing only an area's leftovers: robot_state's path counts in the leftovers, no progress or time."""
+    log = {
+        "lines": [
+            {"t": 1.5, "level": "INFO", "msg": "MowBite Planner: area front, the leftovers: 3 passes, 1.2 m2"},
+        ]
+    }
+    rpc = FakeRpc(
+        {
+            **PLANNER_ANSWERS,
+            "rpc.methods": [*PLANNER_ANSWERS["rpc.methods"], "planner.log"],
+            # only the lines since the time asked, like the planner
+            "planner.log": lambda params: {"lines": [line for line in log["lines"] if line["t"] >= params["since"]]},
+        }
+    )
+    mower = await setup_mower(hass, entry, rpc)
+    send(mower, "map/json", MAP)
+    send(
+        mower,
+        "events/json",
+        {"type": "AREA", "area_id": "front", "area_name": "Front", "job_id": "j", "t": 2, "id": "a1"},
+    )
+    send(mower, "position/json", {"x": 1, "y": 1, "heading": 0, "attributes": {"job_id": "j", "blades": True}})
+    send(
+        mower,
+        "robot_state/json",
+        {**ROBOT_STATE, "current_state": "MOWING", "current_path": 0, "current_path_index": 10},
+    )
+    await hass.async_block_till_done()
+    assert ("planner.log", {"since": -28, "limit": 200}) in rpc.calls
+    assert hass.states.get("sensor.openmower_area_progress").state == "unknown"
+    assert hass.states.get("sensor.openmower_time_left").state == "unknown"
+    assert hass.states.get("sensor.openmower_current_area").attributes["leftovers"] is True
+    assert entry.runtime_data.planning.card()["plan"] is None
+
+    # the next job is a whole one again
+    send(
+        mower,
+        "events/json",
+        {"type": "AREA", "area_id": "front", "area_name": "Front", "job_id": "k", "t": 900, "id": "a2"},
+    )
+    send(mower, "position/json", {"x": 1, "y": 1, "heading": 0, "attributes": {"job_id": "k", "blades": True}})
+    send(
+        mower,
+        "robot_state/json",
+        {**ROBOT_STATE, "current_state": "MOWING", "current_path": 1, "current_path_index": 100},
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get("sensor.openmower_area_progress").state == "50"

@@ -206,7 +206,12 @@
         "name": "CPU temperature"
       },
       "current_area": {
-        "name": "Current area"
+        "name": "Current area",
+        "state_attributes": {
+          "leftovers": {
+            "name": "Only leftovers"
+          }
+        }
       },
       "disk_free": {
         "name": "Free storage"

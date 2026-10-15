@@ -7,6 +7,7 @@ stayed uncut and where the body came too close to an edge, planner.settings what
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from datetime import timedelta
 import logging
@@ -37,6 +38,13 @@ SETTINGS = "planner.settings"
 SETTINGS_SET = "planner.settings.set"
 ANGLE_RESET = "planner.angle.reset"
 HISTORY = "events.history"
+LOG = "planner.log"
+# what the planner logs when mower_logic fetches an area's plan and gets only the leftovers of the last job
+LEFTOVERS_LINE = "MowBite Planner: area {area_id}, the leftovers"
+# how long before the AREA event the line counts (seconds)
+LEFTOVERS_BEFORE = 30
+# the log is looked at again this long after the area started, the line may come a moment after the event (seconds)
+LEFTOVERS_RECHECK = 10
 HISTORY_LIST = "events.history.list"
 
 # a plan takes a while when the planner has to plan it anew
@@ -176,6 +184,8 @@ class Planning:
         self._plans_for: int | None = None
         self._asking: set[str] = set()
         self._failed: dict[str, float] = {}
+        # area id -> the job in which the mower mows only that area's leftovers
+        self._leftover_runs: dict[str, str] = {}
         self.leftovers: dict[str, Any] | None = None
         self.drive: dict[str, Any] | None = None
         self.settings: dict[str, Any] | None = None
@@ -251,10 +261,18 @@ class Planning:
         return self._mower.area
 
     @property
+    def leftover_run(self) -> bool:
+        """Whether the mower mows only the leftovers of the area: robot_state's path then counts in the leftovers,
+        not in the area's plan, there's no progress or time to tell"""
+        area_id = self.area_id
+        job_id = (self._mower.position or {}).get("job_id")
+        return area_id is not None and job_id is not None and self._leftover_runs.get(area_id) == job_id
+
+    @property
     def progress(self) -> float | None:
         """How far through the area being mowed (0..1)."""
         area_id = self.area_id
-        if area_id is None:
+        if area_id is None or self.leftover_run:
             return None
         state = self._mower.state or {}
         return plan_progress(self.plans.get(area_id), state.get("current_path"), state.get("current_path_index"))
@@ -354,6 +372,8 @@ class Planning:
         kind = event.get("type")
         if kind == "AREA" and event.get("area_id") and self._ready and self.plan_method:
             self._ask(self._async_plan(event["area_id"]))
+            if self.plan_method == PLANNER_PLAN and self.has(LOG) and isinstance(event.get("job_id"), str):
+                self._ask(self._async_leftover_run(event["area_id"], event["job_id"], event.get("t")))
         elif kind == "DOCKED":
             if self._after_docking is not None:
                 self._after_docking()
@@ -482,6 +502,22 @@ class Planning:
         self.version += 1
         self._mower.notify(KEY_PLANNING)
 
+    async def _async_leftover_run(self, area_id: str, job_id: str, t: Any) -> None:
+        """Whether the area started is only its leftovers, the planner's log says so when mower_logic got the plan."""
+        # the plan was fetched right before the area started, an older line would be from a job before
+        since = (t if isinstance(t, (int, float)) else time.time()) - LEFTOVERS_BEFORE
+        line = LEFTOVERS_LINE.format(area_id=area_id)
+        for attempt in range(2):
+            if attempt:
+                await asyncio.sleep(LEFTOVERS_RECHECK)
+            result = await self._rpc(LOG, {"since": since, "limit": 200})
+            lines = (result or {}).get("lines") if isinstance(result, dict) else None
+            if any(isinstance(entry, dict) and str(entry.get("msg", "")).startswith(line) for entry in lines or []):
+                self._leftover_runs = {area_id: job_id}
+                self.version += 1
+                self._mower.notify(KEY_PLANNING)
+                return
+
     async def _async_after_job(self) -> None:
         """What the last job left uncut and where it came too close to an edge, once after each job. The plans too,
         they aren't asked while mowing. The settings first, they may have been changed in the app"""
@@ -539,6 +575,8 @@ class Planning:
         area_id = self.area_id
         plan = self.plans.get(area_id or "")
         state = self._mower.state or {}
+        if self.leftover_run:
+            plan = None
         return {
             "plan": {"area_id": area_id, "paths": plan["paths"]} if plan else None,
             "plan_at": [state.get("current_path"), state.get("current_path_index")] if plan else None,

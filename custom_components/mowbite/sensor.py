@@ -258,6 +258,8 @@ DATA_SENSORS = (
         key="current_area",
         translation_key="current_area",
         value_fn=lambda data: data.planning.area_name,
+        # only the area's leftovers: no progress or time then
+        attributes_fn=lambda data: {"leftovers": data.planning.leftover_run},
         feature=(EVENTS, RPC + HISTORY),
     ),
     MowbiteDataSensorDescription(
