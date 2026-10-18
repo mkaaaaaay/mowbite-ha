@@ -96,9 +96,22 @@ entity: lawn_mower.openmower
 map: integration   # integration, app, auto (while it drives), always or never
 map_height: 260    # pixels, leave it out for a square map like in the app
 status: true       # false shows only the map
-theme: frost       # frost (frosted glass), dark, light or auto (like Home Assistant)
+today: true        # false leaves out "Today" (what was mowed, the last runs, the next start)
+leftovers: true    # false leaves out checking the last mow for leftovers (with the MowBite Planner)
+theme: frost       # frost (frosted glass), aurora, sunny, dark, light or auto (like Home Assistant)
 blur: true         # false is lighter for older tablets: no blur, and the map follows the mower in steps
 ```
+
+The card is MowBite's dashboard: the status with the battery ring, the facts (GPS, speed, progress with the time
+left, Wi-Fi, temperatures), the buttons, the map, and "Today" with what was mowed, the last runs, a start the
+schedule left out, maintenance due and the next start. In the language of your Home Assistant user, German or
+English, with MowBite's own words.
+
+It draws the map the way your MowBite does: its colours, the mower and dock icon, the garden style with the pictures
+picked for the areas, the real edges and the mower's outline. With the MowBite address set and a MowBite that serves
+its pictures (1.4 and newer) the card takes them from the mower, so it looks like the MowBite the mower runs, else the
+ones that came with the integration. The mower's pictures run in a sandbox of their own, they can't reach Home
+Assistant.
 
 The map zooms with the buttons, the mouse wheel or two fingers, and moves when dragged. While the mower drives the
 map follows it like the app's overview: a few metres around the mower, with the mower gliding in the middle.
@@ -133,6 +146,13 @@ The tests run against Home Assistant's own test tools:
 ```
 pip install -r requirements_test.txt
 pytest
+```
+
+The card's pictures (`mowbite-art.js`) and its dashboard logic and looks (`mowbite-app.js`) are built from
+MowBite's own sources:
+
+```
+node scripts/build-art.mjs <path to MowBite>
 ```
 
 ## License

@@ -6,6 +6,7 @@ from collections.abc import Callable
 from datetime import timedelta
 import json
 import logging
+import re
 import time
 from typing import Any
 
@@ -19,9 +20,10 @@ _LOGGER = logging.getLogger(__name__)
 
 # the app keeps them in its container, the same for every device (docker/settings.cgi)
 SETTINGS_PATH = "/cgi-bin/settings"
-REFRESH = timedelta(minutes=5)
-# what the card uses of them
-KEYS = ("colors", "icons", "dashboard", "mower")
+# a change in the app shows on the card a minute later at the latest
+REFRESH = timedelta(minutes=1)
+# what the card uses of them: the map's colors, icons, style and pictures per area, the mower's sizes
+KEYS = ("colors", "icons", "dashboard", "mower", "mapStyle", "looks", "keepRectangle")
 
 
 class CannotReachApp(Exception):
@@ -40,7 +42,7 @@ async def async_fetch(hass: HomeAssistant, url: str) -> dict[str, Any]:
         raise CannotReachApp from err
     if not isinstance(data, dict):
         raise CannotReachApp
-    return {key: data[key] for key in KEYS if isinstance(data.get(key), dict)}
+    return {key: data[key] for key in KEYS if data.get(key) is not None}
 
 
 class AppSettings:
@@ -52,6 +54,10 @@ class AppSettings:
         self.data: dict[str, Any] = {}
         self.version = 0
         self._listeners: list[Callable[[], None]] = []
+
+    @property
+    def url(self) -> str | None:
+        return self._url
 
     def add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
         self._listeners.append(listener)
@@ -90,6 +96,9 @@ SYSTEM_PATH = "/cgi-bin/system"
 SCHEDULE_PATH = "/cgi-bin/schedule"
 SCHEDULE_LOG_PATH = "/cgi-bin/schedule?log"
 BATTERY_PATH = "/cgi-bin/battery"
+# the map's pictures, the app's own mowers, docks and garden (MowBite 1.4 and newer), and how big they may be
+ART_PATH = "/mowbite-art.js"
+ART_MAX = 4_000_000
 STATUS_REFRESH = timedelta(minutes=1)
 # the slower ones every so many refreshes
 SCHEDULE_EVERY = 5
@@ -166,6 +175,26 @@ def parse_battery(text: str, now: float) -> dict[str, Any]:
     return out
 
 
+# what the card may read from the app for its dashboard, the way the app's own pages ask it: GET only, these paths
+APP_READ = re.compile(
+    r"^/(version\.json"
+    r"|cgi-bin/(system|schedule|schedule\?log|stats|battery|version"
+    r"|roslog\?(oldest|t=\d+&before=\d+&after=\d+)"
+    r"|gpslog\?cells=\d+))$"
+)
+
+
+async def async_read(hass: HomeAssistant, url: str, path: str) -> tuple[int, str]:
+    """One of APP_READ from the app at url, its status and text (502 when it doesn't answer)."""
+    try:
+        async with async_get_clientsession(hass).get(
+            url.rstrip("/") + path, timeout=aiohttp.ClientTimeout(total=15)
+        ) as response:
+            return response.status, await response.text()
+    except (aiohttp.ClientError, TimeoutError, UnicodeDecodeError):
+        return 502, ""
+
+
 class AppStatus:
     """The app's status endpoints, read every minute (the slower ones less often), nothing without an address."""
 
@@ -175,6 +204,9 @@ class AppStatus:
         # called with the endpoints that answered, they're features
         self._found = found
         self.version: str | None = None
+        # the map's pictures the app serves (/mowbite-art.js): their interface version, and the file once asked
+        self.art_api: int | None = None
+        self._art: tuple[str, str] | None = None
         self.system: dict[str, Any] | None = None
         self.schedule: dict[str, Any] | None = None
         self.schedule_log: dict[str, Any] | None = None
@@ -209,17 +241,44 @@ class AppStatus:
         except (aiohttp.ClientError, TimeoutError, UnicodeDecodeError):
             return None
 
+    async def async_art(self) -> tuple[int, str] | None:
+        """The map's pictures the app serves and their interface version, asked once per app version."""
+        if not self._url:
+            return None
+        if self.version is None:
+            # asked before the first refresh came back: the version now
+            text = await self._get(VERSION_PATH)
+            try:
+                info = json.loads(text) if text else None
+            except ValueError:
+                info = None
+            if isinstance(info, dict) and isinstance(info.get("version"), str):
+                self.version = info["version"]
+                art = info.get("art")
+                self.art_api = art if isinstance(art, int) and not isinstance(art, bool) else None
+        if self.art_api is None or self.version is None:
+            return None
+        if self._art is None or self._art[0] != self.version:
+            text = await self._get(ART_PATH)
+            if text is None or len(text) > ART_MAX:
+                return None
+            self._art = (self.version, text)
+        return self.art_api, self._art[1]
+
     async def async_refresh(self) -> None:
         found: list[str] = []
         n = self._round
         self._round += 1
         if n % VERSION_EVERY == 0 and (text := await self._get(VERSION_PATH)) is not None:
             try:
-                version = json.loads(text).get("version")
-            except (ValueError, AttributeError):
-                version = None
+                info = json.loads(text)
+            except ValueError:
+                info = None
+            version = info.get("version") if isinstance(info, dict) else None
             if isinstance(version, str):
                 self.version = version
+                art = info.get("art")
+                self.art_api = art if isinstance(art, int) and not isinstance(art, bool) else None
                 found.append("version")
         system = parse_system(text) if (text := await self._get(SYSTEM_PATH)) is not None else {}
         # the computer's values are gone with it, the others keep what they said last

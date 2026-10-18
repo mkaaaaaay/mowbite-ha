@@ -54,3 +54,16 @@ async def test_removed_with_the_last_mower(hass: HomeAssistant, entry: MockConfi
     assert await hass.config_entries.async_remove(entry.entry_id)
     await hass.async_block_till_done()
     assert not any(r["url"].startswith(CARD_PATH) for r in _resources(hass))
+
+
+def test_the_app_files_come_along() -> None:
+    """The card's pictures and dashboard logic, built from MowBite (scripts/build-art.mjs), go with the integration."""
+    from pathlib import Path
+
+    frontend = Path(__file__).parent.parent / "custom_components" / "mowbite" / "frontend"
+    art = (frontend / "mowbite-art.js").read_text()
+    app = (frontend / "mowbite-app.js").read_text()
+    assert "export const ART_API = 1;" in art
+    assert "export const APP_API = 1;" in app and "export const DASHBOARD_CSS" in app
+    # drawing only, nothing loaded from elsewhere
+    assert "fetch(" not in art.split("// what the card uses")[0].split("const transportMowers")[0]

@@ -9,20 +9,25 @@ const ACTION_IDS = {
   skip_area: 'mower_logic:mowing/skip_area',
   reset_emergency: 'mower_logic/reset_emergency',
   reset_job: 'mower_logic:idle/reset_job',
+  skip_path: 'mower_logic:mowing/skip_path',
 };
 
-// paused counts too, the mower is standing somewhere on the lawn then
-const DRIVING = new Set(['MOWING', 'PAUSED', 'DOCKING', 'UNDOCKING']);
-// skipping an area drops what's left of it, so it goes out only after a few seconds and a second tap takes it back
+// paused counts too, the mower is standing somewhere on the lawn then. recording drives with gps as well
+const DRIVING = new Set(['MOWING', 'PAUSED', 'DOCKING', 'UNDOCKING', 'AREA_RECORDING']);
+// skipping an area or a path drops what's left of it, so it goes out only after a few seconds and a second tap takes
+// it back
 const SKIP_DELAY = 4;
 
 // every temperature of the mower in a fixed order, the blade side first, then the wheels, unknown ones after them
 const TEMP_ORDER = [
   ['om_mow_motor_temp', 'Mow motor'],
-  ['om_mow_esc_temp', 'Mow controller'],
-  ['om_left_esc_temp', 'Left drive controller'],
-  ['om_right_esc_temp', 'Right drive controller'],
+  ['om_mow_esc_temp', 'Mow ESC'],
+  ['om_left_esc_temp', 'Left ESC'],
+  ['om_right_esc_temp', 'Right ESC'],
 ];
+
+// the app's themes (its globals.css), auto follows Home Assistant's dark mode with dark or light
+const THEMES = ['frost', 'dark', 'light', 'aurora', 'sunny'];
 
 const GPS_QUALITY_LABEL = {none: 'no fix', fix: 'RTK fix', float: 'float', poor: 'too inaccurate'};
 
@@ -109,6 +114,8 @@ function gpsQuality(accuracy, limit = 0.2) {
 const escape = (s) =>
   String(s).replace(/[&<>"']/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
 
+// the card's own looks around the app's (DASHBOARD_CSS from mowbite-app.js: the themes' colors from the app's
+// globals.css, its dashboard from page.module.css)
 const STYLE = `
   :host {
     display: block;
@@ -121,7 +128,6 @@ const STYLE = `
     box-shadow: none;
   }
 
-  /* the app's looks, from its globals.css. frost is dark with milky glass cards */
   .mb {
     container: card / inline-size;
     color: var(--foreground);
@@ -131,58 +137,16 @@ const STYLE = `
     -webkit-user-select: none;
   }
 
-  .mb.light {
-    --background: #cdd6cf;
-    --foreground: #1c2420;
-    --card: rgba(255, 255, 255, 0.42);
-    --card-border: rgba(255, 255, 255, 0.6);
-    --card-blur: blur(5px) saturate(130%);
-    --card-shadow: 0 1px 2px rgba(20, 40, 30, 0.06), 0 6px 20px rgba(20, 40, 30, 0.07);
-    --btn-3d: inset 0 1px 0 rgba(255, 255, 255, 0.75), 0 1px 1px rgba(20, 40, 30, 0.1), 0 2px 6px rgba(20, 40, 30, 0.08);
-    --btn-3d-hover: inset 0 1px 0 rgba(255, 255, 255, 0.85), 0 2px 2px rgba(20, 40, 30, 0.1), 0 6px 14px rgba(20, 40, 30, 0.12);
-    --text-secondary: #4f5b54;
-    --accent: #2f6fbd;
-    --warning: #a8780f;
-    --error: #c93a3e;
-    --success: #2e8a47;
-  }
-
-  .mb.dark,
-  .mb.frost {
-    --background: #101114;
-    --foreground: #f1f1f1;
-    --card: rgba(255, 255, 255, 0.05);
-    --card-border: rgba(255, 255, 255, 0.09);
-    --card-blur: blur(3px) saturate(140%);
-    --card-shadow: none;
-    --btn-3d: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 1px 1px rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.25);
-    --btn-3d-hover: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 2px 2px rgba(0, 0, 0, 0.35), 0 6px 14px rgba(0, 0, 0, 0.35);
-    --text-secondary: #9a9ba0;
-    --accent: #5b9df0;
-    --warning: #d4ac4a;
-    --error: #ff6669;
-    --success: #4cbf72;
-    color-scheme: dark;
-  }
-
-  .mb.dark {
-  }
-
-  .mb.frost {
-    --background: #1a1c22;
-    --card: rgba(235, 240, 255, 0.12);
-    --card-border: rgba(255, 255, 255, 0.2);
-    --card-blur: blur(18px) saturate(160%);
-    --card-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 6px 24px rgba(0, 0, 0, 0.28);
-    --text-secondary: #a9abb2;
-  }
-
   .page {
     display: grid;
     gap: 16px;
   }
 
   /* the app's name, small and quiet in the glass's bottom edge */
+  .status {
+    position: relative;
+  }
+
   .wordmark {
     position: absolute;
     right: 14px;
@@ -198,273 +162,22 @@ const STYLE = `
     font-weight: 700;
   }
 
-  /* a phone has less room than the app gets: a bit less padding so four buttons still fit */
-  @container card (max-width: 420px) {
-    .status {
-      padding: 14px;
-    }
-  }
-
-  .dim {
-    color: var(--text-secondary);
-  }
-
   .message {
     font-size: 14px;
   }
 
-  .status {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    padding: 18px;
-    border-radius: 18px;
-    border: 1px solid var(--card-border);
-    /* a thin colored line on top says at a glance whether all is well */
-    border-top: 3px solid var(--tone, var(--card-border));
-    background: var(--card);
-    box-shadow: var(--card-shadow, none);
-    backdrop-filter: var(--card-blur, none);
-    -webkit-backdrop-filter: var(--card-blur, none);
-  }
-
-  .tone-good {
-    --tone: var(--success);
-  }
-
-  .tone-live {
-    --tone: var(--accent);
-  }
-
-  .tone-warn {
-    --tone: var(--warning);
-  }
-
-  .tone-error {
-    --tone: var(--error);
-  }
-
-  .tone-neutral {
-    --tone: var(--card-border);
-  }
-
-  /* offline or no fresh state: everything in the card is old, the line under the headline says since when */
-  .stale .ring,
-  .stale .headline h2,
-  .stale .facts {
-    opacity: 0.45;
-  }
-
-  .offline {
-    color: var(--warning);
-    font-weight: 600;
-  }
-
-  .statusTop {
-    display: flex;
-    align-items: center;
-    gap: 18px;
-  }
-
-  .headline {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    min-width: 0;
-  }
-
-  .headline h2 {
-    margin: 0;
-    font-size: 22px;
-    line-height: 1.2;
-  }
-
-  .headline span {
-    font-size: 13px;
-  }
-
-  .ring {
-    position: relative;
-    flex: none;
-    width: 84px;
-    height: 84px;
-  }
-
-  .ring svg {
-    width: 100%;
-    height: 100%;
-    transform: rotate(-90deg);
-  }
-
-  .ring circle {
-    fill: none;
-    stroke-width: 7;
-  }
-
-  .ringBg {
-    stroke: rgba(128, 128, 128, 0.2);
-  }
-
-  .ringFill {
-    stroke: var(--ring);
-    stroke-linecap: round;
-    transition: stroke-dasharray 0.6s;
-  }
-
-  .ring-success {
-    --ring: var(--success);
-  }
-
-  .ring-warning {
-    --ring: var(--warning);
-  }
-
-  .ring-error {
-    --ring: var(--error);
-  }
-
-  .ring > div {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .ring strong {
-    font-size: 19px;
-  }
-
-  .ring span {
-    font-size: 10px;
-    color: var(--text-secondary);
-  }
-
-  .facts {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-
-  .facts:empty {
-    display: none;
-  }
-
-  .facts div {
-    display: flex;
-    align-items: baseline;
-    gap: 6px;
-    padding: 5px 10px;
-    border-radius: 8px;
-    background: rgba(128, 128, 128, 0.1);
-    font-size: 13px;
-  }
-
-  .facts span {
-    color: var(--text-secondary);
-    font-size: 12px;
-  }
-
-  .facts .warn {
-    background: color-mix(in srgb, var(--warning) 16%, transparent);
-    color: var(--warning);
-  }
-
-  .controls {
-    container: controls / inline-size;
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 8px;
-  }
-
-  .controls button {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    padding: 12px 10px;
-    border-radius: 12px;
-    border: 1px solid var(--card-border);
-    background: rgba(128, 128, 128, 0.08);
-    color: var(--foreground);
-    font: inherit;
-    font-size: 14px;
-    font-weight: 600;
-    line-height: 1.15;
-    text-align: center;
-    min-width: 0;
-    overflow-wrap: anywhere;
-    hyphens: auto;
-    cursor: pointer;
-    box-shadow: var(--btn-3d);
-    -webkit-tap-highlight-color: transparent;
-    transition:
-      transform 0.08s ease-out,
-      filter 0.08s ease-out,
-      box-shadow 0.08s ease-out;
-  }
-
-  .controls button svg {
-    flex-shrink: 0;
-  }
-
-  .controls button:disabled {
-    opacity: 0.35;
-    cursor: default;
-  }
-
-  /* buttons give way under the finger like a real one */
-  .controls button:active:not(:disabled) {
-    transform: translateY(1px) scale(0.96);
-    filter: brightness(0.85);
-    box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.35);
-  }
-
-  @media (hover: hover) and (prefers-reduced-motion: no-preference) {
-    .controls button:not(:disabled):hover {
-      --btn-3d: var(--btn-3d-hover);
-      transform: translateY(-1px);
+  /* a phone has less room than the app gets: a bit less padding so four buttons still fit */
+  @container card (max-width: 420px) {
+    .status,
+    .today {
+      padding: 14px;
     }
   }
 
-  .controls .main:not(:disabled) {
-    border-color: color-mix(in srgb, var(--accent) 70%, transparent);
-    background: color-mix(in srgb, var(--accent) 35%, transparent);
-    color: var(--foreground);
-  }
-
-  .controls .reset {
-    grid-column: 1 / -1;
-    border-color: var(--error);
-    background: color-mix(in srgb, var(--error) 18%, transparent);
-    color: var(--error);
-  }
-
-  .controls .resetJobButton {
-    grid-column: 1 / -1;
-    padding: 8px;
-    border-style: dashed;
-    font-size: 13px;
-    color: var(--text-secondary);
-  }
-
-  .controls .resetJob {
-    grid-column: 1 / -1;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px;
-    font-size: 13px;
-  }
-
-  .controls .resetJob span {
-    flex: 1 1 100%;
-  }
-
-  .controls .resetJob button {
-    flex: 1;
+  /* the backdrop blur needs a prefix in older webviews (the wall tablet's) */
+  .status,
+  .today {
+    -webkit-backdrop-filter: var(--card-blur, none);
   }
 
   [hidden] {
@@ -475,22 +188,13 @@ const STYLE = `
   .mb.noblur {
     --card-blur: none;
   }
-
-  /* by the width of the card, not the screen: four buttons side by side need about 600px for a label next to its icon */
-  @container controls (max-width: 640px) {
-    .controls button:not(.reset) {
-      flex-direction: column;
-      gap: 4px;
-      padding: 10px 4px;
-      font-size: 12px;
-    }
-  }
 `;
 
 // ---- the map, drawn the way the MowBite app draws it (MapView, mapIcons)
 
 // the app's map colours, its settings change them
 const MAP_COLORS = {
+  // the app's colors and their defaults (src/lib/settings.ts COLORS)
   mower: '#ff1fa3',
   dock: '#2196f3',
   track: '#ff1fa3',
@@ -499,161 +203,245 @@ const MAP_COLORS = {
   unmowed: '#ffb300',
   nav: '#29b6f6',
   obstacle: '#ef5350',
+  draft: '#888888',
+  selected: '#ff1fa3',
+  vertex: '#2196f3',
+  stripes: '#ff1fa3',
   body: '#ff1fa3',
   swath: '#ffffff',
+  edge: '#c5e1a5',
 };
+
+// ---- the app's pictures of the mowers, docks and the garden style: the ones that came with the integration
+// (mowbite-art.js, built from MowBite by scripts/build-art.mjs), or the mower's own when its MowBite serves them, so the
+// card looks like the MowBite the mower runs
+
+// what the card draws with them, worked out where the pictures are. plain data in, plain data and svg text out, so the
+// same runs on the mower's own pictures in their sandbox (this function's text goes in there)
+function artOps(art) {
+  return {
+    api: () => art.ART_API,
+    mower(key, o) {
+      const icon = art.mowerIcon(key);
+      return {key: icon.key, fit: icon.fit, side: icon.side, upright: icon.upright, svg: icon.draw(o)};
+    },
+    dock(key) {
+      const icon = art.dockIcon(key);
+      return {key: icon.key, real: icon.real, svg: icon.draw()};
+    },
+    body: (sizes, keepRectangle) => art.sizesBody(sizes, keepRectangle) ?? null,
+    // the garden style's textures, fills and things in the app's own units (its 400 wide square, fit: where the map
+    // lies in it), and the real edges in metres
+    areas({areas, looks, body, garden, uid, fit}) {
+      const {minX, minY, m, padX, padY} = fit;
+      const app = (p) => ({x: (p.x - minX) * m + padX, y: 400 - ((p.y - minY) * m + padY)});
+      const ring = (o) => o.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(3)} ${(-p.y).toFixed(3)}`).join('') + 'Z';
+      const out = {defs: '', fills: {}, things: {}, edges: null};
+      if (garden) {
+        const angles = [];
+        const clips = [];
+        for (const a of areas) {
+          const type = a.properties?.type;
+          if (type === 'mow') {
+            out.fills[a.id] = a.properties.mowable === false ? 'meadow' : `lawn${angles.length}`;
+            angles.push(a.properties.angle ?? art.autoMowAngle(a.outline));
+          } else if ((type === 'obstacle' || type === 'nav') && (a.outline ?? []).length > 2) {
+            const look = art.areaLook(a, looks);
+            out.fills[a.id] = art.groundOf(look);
+            if (!art.isThing(look)) continue;
+            // a thing inside the area's real edge, cut to it should it still stick out
+            const inside = ((body && art.insideEdge(a.outline, body)) || a.outline).map(app);
+            const {cx, cy, deg, w, h} = art.placeThing(look, inside);
+            out.things[a.id] = {
+              i: clips.length,
+              svg: `<g transform="translate(${cx} ${cy}) rotate(${deg})">${art.drawThing(look, {x: -w / 2, y: -h / 2, w, h}) ?? ''}</g>`,
+            };
+            clips.push(inside.map((p) => `${p.x},${p.y}`).join(' '));
+          }
+        }
+        out.defs = art.gardenDefs(uid, m, angles, clips);
+      }
+      if (body) {
+        const e = art.realEdges(areas, body);
+        out.edges = {
+          line: [...e.lawn, ...e.obstacles].map(ring).join(''),
+          outside: e.grass.outside.map(ring).join(''),
+          obstacles: e.grass.obstacles.map(ring).join(''),
+        };
+      }
+      return out;
+    },
+  };
+}
+
+// the pictures that came with the integration, loaded next to the card with the same version
+class BundledArt {
+  constructor() {
+    this.ops = import(new URL('mowbite-art.js' + new URL(import.meta.url).search, import.meta.url).href)
+      .then((module) => artOps(module))
+      .catch((err) => {
+        console.warn('MowBite card: the map pictures are missing', err);
+        return null;
+      });
+  }
+
+  async call(op, ...args) {
+    const ops = await this.ops;
+    if (!ops) throw new Error('no pictures');
+    return ops[op](...args);
+  }
+}
+const bundledArt = new BundledArt();
+
+// The mower's own pictures, from its MowBite (/mowbite-art.js, through the integration). Its code runs in a frame of
+// its own with a unique origin (sandbox without allow-same-origin): it can't reach Home Assistant, the page or its
+// login, it only answers with plain data and svg text, and that is cleaned before it goes into the card
+class SandboxArt {
+  constructor(code) {
+    this.pending = new Map();
+    this.next = 1;
+    this.frame = document.createElement('iframe');
+    this.frame.setAttribute('sandbox', 'allow-scripts');
+    this.frame.setAttribute('aria-hidden', 'true');
+    this.frame.style.cssText = 'position:fixed;width:0;height:0;border:0;visibility:hidden;';
+    this.frame.srcdoc = `<!doctype html><script type="module">
+const artOps = ${artOps.toString()};
+let ops = null;
+addEventListener('message', async (event) => {
+  const {id, code, op, args} = event.data ?? {};
+  try {
+    if (code !== undefined) {
+      const url = URL.createObjectURL(new Blob([code], {type: 'text/javascript'}));
+      ops = artOps(await import(url));
+      parent.postMessage({id, ok: true, result: ops.api()}, '*');
+    } else {
+      parent.postMessage({id, ok: true, result: ops[op](...args)}, '*');
+    }
+  } catch (err) {
+    parent.postMessage({id, ok: false, error: String(err?.message ?? err)}, '*');
+  }
+});
+parent.postMessage({ready: true}, '*');
+<\/script>`;
+    this.onMessage = (event) => {
+      if (event.source !== this.frame.contentWindow) return;
+      const data = event.data ?? {};
+      if (data.ready) return this.loaded?.();
+      const waiting = this.pending.get(data.id);
+      if (!waiting) return;
+      this.pending.delete(data.id);
+      if (data.ok) waiting.resolve(data.result);
+      else waiting.reject(new Error(data.error));
+    };
+    window.addEventListener('message', this.onMessage);
+    const loaded = new Promise((resolve) => (this.loaded = resolve));
+    document.body.appendChild(this.frame);
+    this.api = loaded.then(() => this.send({code}));
+  }
+
+  send(message) {
+    const id = this.next++;
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, {resolve, reject});
+      this.frame.contentWindow.postMessage({id, ...message}, '*');
+      setTimeout(() => {
+        if (this.pending.delete(id)) reject(new Error('the pictures did not answer'));
+      }, 20000);
+    });
+  }
+
+  async call(op, ...args) {
+    await this.api;
+    return cleanArt(op, await this.send({op, args}));
+  }
+
+  destroy() {
+    window.removeEventListener('message', this.onMessage);
+    this.frame.remove();
+  }
+}
+
+// what can come back from the mower's pictures, with only the svg that draws: no scripts, no event handlers, no
+// links or anything loaded from elsewhere
+function cleanArt(op, result) {
+  if (!result || typeof result !== 'object') return result;
+  const out = JSON.parse(JSON.stringify(result));
+  if (op === 'mower' || op === 'dock') out.svg = cleanSvg(out.svg);
+  if (op === 'areas') {
+    out.defs = cleanSvg(out.defs);
+    for (const thing of Object.values(out.things ?? {})) thing.svg = cleanSvg(thing.svg);
+    for (const [id, fill] of Object.entries(out.fills ?? {})) if (!/^[\w-]+$/.test(fill)) delete out.fills[id];
+    for (const [key, d] of Object.entries(out.edges ?? {})) if (!/^[MLZ0-9.\s-]*$/.test(d)) out.edges[key] = '';
+  }
+  return out;
+}
+
+const SVG_ALLOWED = new Set(
+  (
+    'g path circle ellipse rect line polyline polygon defs linearGradient radialGradient stop pattern clipPath mask ' +
+    'symbol use text tspan title desc animate animateTransform animateMotion set filter feGaussianBlur feOffset ' +
+    'feMerge feMergeNode feFlood feComposite feColorMatrix feBlend feMorphology feDropShadow feTurbulence ' +
+    'feDisplacementMap marker'
+  ).split(' '),
+);
+
+function cleanSvg(text) {
+  if (typeof text !== 'string' || !text) return '';
+  const doc = new DOMParser().parseFromString(`<svg xmlns="${svgNS}" xmlns:xlink="http://www.w3.org/1999/xlink">${text}</svg>`, 'image/svg+xml');
+  const root = doc.documentElement;
+  if (root.nodeName !== 'svg' || doc.getElementsByTagName('parsererror').length) return '';
+  for (const el of [...root.querySelectorAll('*')]) {
+    if (!SVG_ALLOWED.has(el.localName) || el.namespaceURI !== svgNS) {
+      el.remove();
+      continue;
+    }
+    for (const attr of [...el.attributes]) {
+      const name = attr.name.toLowerCase();
+      const value = attr.value;
+      const local = /url\((?!\s*['"]?#)/i.test(value) || /javascript:|data:|expression\(|@import/i.test(value);
+      if (name.startsWith('on') || local || ((name === 'href' || name === 'xlink:href') && !value.startsWith('#'))) {
+        el.removeAttribute(attr.name);
+      }
+    }
+  }
+  return [...root.childNodes].map((n) => new XMLSerializer().serializeToString(n)).join('').replace(/ xmlns="[^"]*"/g, '');
+}
+
+// per mower: the pictures it draws with, the mower's own once its MowBite serves pictures this card knows (ART_API 1),
+// else the ones that came with the integration
+const ART_API = 1;
+const mowerArt = new Map();
+function artFor(card) {
+  const entity = card._config.entity;
+  if (!mowerArt.has(entity)) {
+    const choice = {art: bundledArt, listeners: new Set()};
+    mowerArt.set(entity, choice);
+    card._hass
+      .callWS({type: 'mowbite/art', entity_id: entity})
+      .then(async (answer) => {
+        if (!answer?.code || answer.api !== ART_API) return;
+        const own = new SandboxArt(answer.code);
+        const api = await own.api.catch(() => null);
+        if (api !== ART_API) {
+          own.destroy();
+          return;
+        }
+        choice.art = own;
+        for (const listener of choice.listeners) listener(own);
+      })
+      .catch(() => {});
+  }
+  return mowerArt.get(entity);
+}
 
 // half the mower's length, m, when the app draws it at its real size
 const MOWER_SIZE = 0.4;
 // icons that don't grow with the map are this many pixels, times the size set in the app
 const ICON_PX = 8;
 
-const BLACK = '#262626';
-const ORANGE = '#f57c00';
-const WHEEL = '#9e9e9e';
-const SILVER = '#cfd8dc';
-const STOP = '#e53935';
-const LINE = 'stroke="#000" stroke-width="0.75" stroke-opacity="0.6"';
-
-// the red stop button, blinking on an emergency stop
-const stopButton = (x, w, h, emergency) =>
-  `<rect x="${x}" y="${-h / 2}" width="${w}" height="${h}" rx="0.05" fill="${STOP}" ${LINE}>${
-    emergency ? `<animate attributeName="fill" values="${STOP};#fff;${STOP}" dur="0.8s" repeatCount="indefinite"/>` : ''
-  }</rect>`;
-const rearWheels = (x, len, inner) =>
-  `<rect x="${x}" y="-1" width="${len}" height="${1 - inner}" rx="0.04" fill="${WHEEL}" ${LINE}/>` +
-  `<rect x="${x}" y="${inner}" width="${len}" height="${1 - inner}" rx="0.04" fill="${WHEEL}" ${LINE}/>`;
-const mouth = (deg) => {
-  const a = (deg * Math.PI) / 180;
-  const x = Math.cos(a).toFixed(3);
-  const y = Math.sin(a).toFixed(3);
-  return `M0,0 L${x},${y} A1,1 0 1,1 ${x},${-y} Z`;
-};
-
-// mower icons face +x and span about -1..1. a real mower from above (fit: its width over its length) is drawn that
-// much narrower. the app's side views and figures (gardener, OpenMower) aren't here, they get the arrowhead
-const MAP_MOWERS = {
-  triangle: {draw: () => '<polygon points="1,0 -0.6,0.6 -0.6,-0.6" fill="var(--c-mower)" stroke="#fff" stroke-width="0.5"/>'},
-  arrow: {
-    draw: () =>
-      '<path d="M1,0 L-0.2,-0.8 L-0.2,-0.3 L-1,-0.3 L-1,0.3 L-0.2,0.3 L-0.2,0.8 Z" fill="var(--c-mower)" stroke="#fff" stroke-width="0.5"/>',
-  },
-  robot: {
-    draw: () =>
-      '<rect x="-1" y="-0.95" width="0.55" height="0.3" rx="0.1" fill="#222"/><rect x="-1" y="0.65" width="0.55" height="0.3" rx="0.1" fill="#222"/>' +
-      '<rect x="-0.95" y="-0.7" width="1.9" height="1.4" rx="0.45" fill="var(--c-mower)" stroke="#fff" stroke-width="0.5"/>' +
-      '<circle cx="0.15" cy="0" r="0.32" fill="rgba(0,0,0,0.35)"/><circle cx="0.62" cy="0" r="0.12" fill="#fff"/>',
-  },
-  dot: {
-    draw: () =>
-      '<line x1="0" y1="0" x2="1.1" y2="0" stroke="var(--c-mower)" stroke-width="2" stroke-linecap="round"/><circle r="0.6" fill="var(--c-mower)" stroke="#fff" stroke-width="0.5"/>',
-  },
-  chomper: {
-    draw: () =>
-      `<path d="${mouth(35)}" fill="var(--c-mower)" stroke="#000" stroke-width="0.5"><animate attributeName="d" values="${mouth(35)};${mouth(3)};${mouth(35)}" dur="0.4s" repeatCount="indefinite"/></path><circle cx="0.05" cy="-0.5" r="0.12" fill="#000"/>`,
-  },
-  rocket: {
-    draw: () =>
-      '<path d="M-0.75,-0.18 L-1.25,0 L-0.75,0.18 Z" fill="#ffb300"><animate attributeName="d" values="M-0.75,-0.18 L-1.25,0 L-0.75,0.18 Z;M-0.75,-0.2 L-1.45,0 L-0.75,0.2 Z;M-0.75,-0.18 L-1.25,0 L-0.75,0.18 Z" dur="0.25s" repeatCount="indefinite"/></path>' +
-      '<path d="M-0.55,-0.3 L-0.95,-0.65 L-0.95,-0.2 Z M-0.55,0.3 L-0.95,0.65 L-0.95,0.2 Z" fill="#555"/>' +
-      '<path d="M1,0 C0.6,-0.45 -0.2,-0.4 -0.8,-0.3 L-0.8,0.3 C-0.2,0.4 0.6,0.45 1,0 Z" fill="var(--c-mower)" stroke="#fff" stroke-width="0.5"/>' +
-      '<circle cx="0.25" cy="0" r="0.15" fill="#9be7ff" stroke="#fff" stroke-width="0.3"/>',
-  },
-  yf500: {
-    fit: 42 / 57,
-    draw: (emergency) =>
-      rearWheels(-0.96, 0.52, 0.84) +
-      `<rect x="-1" y="-0.86" width="2" height="1.72" rx="0.14" fill="${BLACK}" ${LINE}/>` +
-      `<path d="M-0.9,-0.74 L0.7,-0.74 Q0.92,-0.72 0.94,-0.5 L0.94,0.5 Q0.92,0.72 0.7,0.74 L-0.9,0.74 Q-0.96,0.74 -0.96,0.66 L-0.96,-0.66 Q-0.96,-0.74 -0.9,-0.74 Z" fill="${ORANGE}" ${LINE}/>` +
-      `<rect x="0.08" y="-0.36" width="0.5" height="0.72" rx="0.08" fill="#ef6c00" ${LINE}/>` +
-      `<circle cx="-0.32" cy="0" r="0.17" fill="${BLACK}" ${LINE}/><circle cx="-0.32" cy="0" r="0.07" fill="${WHEEL}"/>` +
-      (emergency
-        ? `<circle cx="-0.32" cy="0" r="0.17" fill="none" stroke="${STOP}" stroke-width="2"><animate attributeName="stroke-opacity" values="1;0;1" dur="0.8s" repeatCount="indefinite"/></circle>`
-        : '') +
-      `<rect x="0.95" y="-0.32" width="0.05" height="0.18" fill="${WHEEL}"/><rect x="0.95" y="0.14" width="0.05" height="0.18" fill="${WHEEL}"/>`,
-  },
-  sa650: {
-    fit: 39 / 57,
-    draw: (emergency) =>
-      rearWheels(-0.9, 0.5, 0.9) +
-      `<path d="M-0.98,-0.7 Q-1,-0.96 -0.8,-0.97 L-0.45,-0.97 Q-0.3,-0.96 -0.25,-0.8 L0.55,-0.76 Q0.95,-0.7 1,-0.3 L1,0.3 Q0.95,0.7 0.55,0.76 L-0.25,0.8 Q-0.3,0.96 -0.45,0.97 L-0.8,0.97 Q-1,0.96 -0.98,0.7 Z" fill="${BLACK}" ${LINE}/>` +
-      `<path d="M-0.5,-0.44 L0.38,-0.38 Q0.5,-0.36 0.5,-0.24 L0.5,0.24 Q0.5,0.36 0.38,0.38 L-0.5,0.44 Q-0.58,0.44 -0.58,0.36 L-0.58,-0.36 Q-0.58,-0.44 -0.5,-0.44 Z" fill="${ORANGE}" ${LINE}/>` +
-      `<rect x="-0.18" y="-0.22" width="0.46" height="0.44" rx="0.05" fill="#3a3a3a" ${LINE}/>` +
-      stopButton(-0.78, 0.18, 0.5, emergency) +
-      `<path d="M0.68,-0.4 Q0.94,-0.36 0.97,-0.12 L0.97,0.12 Q0.94,0.36 0.68,0.4 Z" fill="${ORANGE}" ${LINE}/>` +
-      `<rect x="0.8" y="-0.24" width="0.1" height="0.14" fill="${BLACK}"/><rect x="0.8" y="0.1" width="0.1" height="0.14" fill="${BLACK}"/>`,
-  },
-  nx100: {
-    fit: 0.72,
-    draw: (emergency) =>
-      rearWheels(-0.94, 0.56, 0.86) +
-      `<path d="M-0.98,-0.84 L0.55,-0.84 Q0.98,-0.8 1,-0.35 L1,0.35 Q0.98,0.8 0.55,0.84 L-0.98,0.84 Q-1,0.84 -1,0.78 L-1,-0.78 Q-1,-0.84 -0.98,-0.84 Z" fill="${ORANGE}" ${LINE}/>` +
-      `<path d="M-0.92,-0.78 L0.5,-0.78 Q0.92,-0.74 0.94,-0.32 L0.94,0.32 Q0.92,0.74 0.5,0.78 L-0.92,0.78 Q-0.95,0.78 -0.95,0.72 L-0.95,-0.72 Q-0.95,-0.78 -0.92,-0.78 Z" fill="${BLACK}" ${LINE}/>` +
-      `<path d="M-0.5,-0.42 L0.3,-0.36 Q0.42,-0.34 0.42,-0.22 L0.42,0.22 Q0.42,0.34 0.3,0.36 L-0.5,0.42 Q-0.56,0.42 -0.56,0.36 L-0.56,-0.36 Q-0.56,-0.42 -0.5,-0.42 Z" fill="${ORANGE}" ${LINE}/>` +
-      `<rect x="-0.2" y="-0.2" width="0.4" height="0.4" rx="0.05" fill="#3a3a3a" ${LINE}/>` +
-      stopButton(-0.76, 0.18, 0.46, emergency) +
-      `<path d="M0.42,-0.3 L0.62,-0.24 L0.62,0.24 L0.42,0.3 Z" fill="${SILVER}" ${LINE}/>` +
-      `<path d="M0.3,-0.62 L0.66,-0.5 L0.6,-0.42 L0.28,-0.5 Z" fill="${SILVER}" ${LINE}/>` +
-      `<path d="M0.3,0.62 L0.66,0.5 L0.6,0.42 L0.28,0.5 Z" fill="${SILVER}" ${LINE}/>` +
-      `<rect x="0.9" y="-0.3" width="0.08" height="0.2" rx="0.02" fill="${ORANGE}"/><rect x="0.9" y="0.1" width="0.08" height="0.2" rx="0.02" fill="${ORANGE}"/>`,
-  },
-};
-
-// the yard force charging station from above, the tower at +x. -1..1 from the entry to the tower
-const yfDots = [-1, 1]
-  .flatMap((side) =>
-    Array.from({length: 18}, (_, i) => {
-      const row = i % 3;
-      const col = Math.floor(i / 3);
-      return `<rect x="${-0.92 + row * 0.12}" y="${side * (0.16 + col * 0.08) - 0.015}" width="0.03" height="0.03" fill="#111"/>`;
-    }),
-  )
-  .join('');
-
-// dock icons are drawn upright in the same unit box, a real station (real: its sizes in m) at its real size
-const MAP_DOCKS = {
-  dot: {draw: () => '<circle r="0.65" fill="var(--c-dock)"/>'},
-  yardforce: {
-    real: {length: 0.64, width: 0.44, pins: 0.09},
-    draw: () =>
-      '<path d="M-0.94,-0.69 L0.48,-0.69 L0.69,-0.6 L0.69,0.6 L0.48,0.69 L-0.94,0.69 Q-1,0.69 -1,0.63 L-1,-0.63 Q-1,-0.69 -0.94,-0.69 Z" fill="#2b2b2b" stroke="#000" stroke-width="0.75"/>' +
-      '<path d="M0.66,-0.43 L-0.39,-0.64 M0.66,0.43 L-0.39,0.64" stroke="#111" stroke-width="1.5" stroke-linecap="round"/>' +
-      yfDots +
-      '<rect x="0.38" y="-0.22" width="0.08" height="0.04" fill="#bdbdbd"/><rect x="0.38" y="0.18" width="0.08" height="0.04" fill="#bdbdbd"/>' +
-      '<path d="M0.45,-0.45 L0.95,-0.42 Q1,-0.41 1,-0.36 L1,0.36 Q1,0.41 0.95,0.42 L0.45,0.45 Q0.42,0.45 0.42,0.41 L0.42,-0.41 Q0.42,-0.45 0.45,-0.45 Z" fill="#f4612b" stroke="#000" stroke-width="0.75"/>' +
-      '<rect x="0.57" y="-0.23" width="0.27" height="0.46" rx="0.05" fill="#1e1e1e"/>',
-  },
-  bolt: {
-    draw: () =>
-      '<rect x="-0.9" y="-0.9" width="1.8" height="1.8" rx="0.4" fill="var(--c-dock)" stroke="#fff" stroke-width="0.5"/><path d="M0.15,-0.7 L-0.4,0.1 L-0.02,0.1 L-0.15,0.7 L0.4,-0.1 L0.02,-0.1 Z" fill="#fff"/>',
-  },
-  house: {
-    draw: () =>
-      '<path d="M0,-1 L1,-0.1 L0.75,-0.1 L0.75,0.9 L-0.75,0.9 L-0.75,-0.1 L-1,-0.1 Z" fill="var(--c-dock)" stroke="#fff" stroke-width="0.5"/><rect x="-0.22" y="0.3" width="0.44" height="0.6" fill="#fff"/>',
-  },
-  plug: {
-    draw: () =>
-      '<circle r="0.9" fill="var(--c-dock)" stroke="#fff" stroke-width="0.5"/><rect x="-0.4" y="-0.35" width="0.2" height="0.7" rx="0.08" fill="#fff"/><rect x="0.2" y="-0.35" width="0.2" height="0.7" rx="0.08" fill="#fff"/>',
-  },
-  ghost: {
-    draw: () =>
-      '<path d="M-0.85,0.9 L-0.85,-0.1 C-0.85,-1.05 0.85,-1.05 0.85,-0.1 L0.85,0.9 L0.57,0.65 L0.28,0.9 L0,0.65 L-0.28,0.9 L-0.57,0.65 Z" fill="var(--c-dock)" stroke="#fff" stroke-width="0.5"/>' +
-      '<circle cx="-0.3" cy="-0.2" r="0.22" fill="#fff"/><circle cx="0.3" cy="-0.2" r="0.22" fill="#fff"/><circle cx="-0.24" cy="-0.18" r="0.1" fill="#1a237e"/><circle cx="0.36" cy="-0.18" r="0.1" fill="#1a237e"/>',
-  },
-  flag: {
-    draw: () =>
-      '<line x1="-0.6" y1="1" x2="-0.6" y2="-1" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/><path d="M-0.55,-0.95 L0.9,-0.6 L-0.55,-0.2 Z" fill="var(--c-dock)" stroke="#fff" stroke-width="0.4"/>',
-  },
-  shed: {
-    draw: () =>
-      '<rect x="-0.78" y="-0.2" width="1.56" height="1.12" fill="#a1714a" stroke="#fff" stroke-width="0.06"/>' +
-      '<path d="M-0.78,0.08 L0.78,0.08 M-0.78,0.36 L0.78,0.36 M-0.78,0.64 L0.78,0.64" stroke="#7b5233" stroke-width="0.05"/>' +
-      '<path d="M-1,-0.12 L0,-1 L1,-0.12 L0.82,-0.12 L0,-0.82 L-0.82,-0.12 Z" fill="var(--c-dock)" stroke="#fff" stroke-width="0.06"/>' +
-      '<path d="M-0.82,-0.12 L0,-0.82 L0.82,-0.12 Z" fill="var(--c-dock)" opacity="0.7"/>' +
-      '<rect x="-0.22" y="0.22" width="0.44" height="0.7" fill="#5d3b22"/><circle cx="0.13" cy="0.58" r="0.04" fill="#ffd54f"/>' +
-      '<rect x="0.36" y="0.02" width="0.3" height="0.26" fill="#bbdefb" stroke="#5d3b22" stroke-width="0.05"/><rect x="-0.66" y="0.02" width="0.3" height="0.26" fill="#bbdefb" stroke="#5d3b22" stroke-width="0.05"/>',
-  },
-};
+// until the app's pictures are there (or if they can't load): an arrowhead for the mower, a dot for the dock
+const FALLBACK_MOWER = {fit: null, side: false, upright: false, draw: () => '<polygon points="1,0 -0.6,0.6 -0.6,-0.6" fill="var(--c-mower)" stroke="#fff" stroke-width="0.5"/>'};
+const FALLBACK_DOCK = {real: null, draw: () => '<circle r="0.6" fill="var(--c-dock)" stroke="#fff" stroke-width="0.5"/>'};
 
 const MAP_BUTTONS = {
   plus: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
@@ -740,19 +528,75 @@ const MAP_STYLE = `
     stroke-dasharray: 4 4;
   }
 
-  /* what's still to mow of the area, thin under the track */
+  /* what's still to mow of the area, like the app's plan to do */
+  .planTodo,
   .planLane,
   .planOutline {
     fill: none;
-    stroke: var(--c-swath);
-    stroke-opacity: 0.45;
+    stroke: var(--foreground);
+    stroke-opacity: 0.35;
+    stroke-width: 1;
+    stroke-dasharray: 3 3;
+    stroke-linejoin: round;
+    pointer-events: none;
+  }
+
+  .draftArea {
+    fill: var(--c-draft);
+    fill-opacity: 0.12;
+    stroke: var(--c-draft);
     stroke-width: 1;
     stroke-dasharray: 2 3;
+  }
+
+  .dock,
+  .mower,
+  .gardenThing {
+    pointer-events: none;
+  }
+
+  .turn {
+    transition: transform 0.35s ease-in-out;
+  }
+
+  /* lawn too, between the lines (the middle of the mower) and the real edges, as green as the mowing areas */
+  .realGrass {
+    pointer-events: none;
+    fill: var(--c-mow);
+    fill-opacity: 0.35;
+    fill-rule: evenodd;
+    stroke: none;
+  }
+
+  /* where the edges really are, the outlines being the middle of the mower */
+  .realEdge {
+    pointer-events: none;
+    fill: none;
+    stroke: var(--c-edge);
+    stroke-opacity: 0.9;
+    stroke-width: 1.25;
+    stroke-dasharray: 5 3;
     stroke-linejoin: round;
   }
 
-  .planOutline {
-    stroke-opacity: 0.6;
+  /* the garden style (the app's gardenLook): paving around the lawn, half see-through so the page shows a little,
+     the areas filled with their textures, an inactive one and its picture faded */
+  .map.gardenMap {
+    background: transparent;
+  }
+
+  .map svg.garden {
+    background: color-mix(in srgb, #8f8778 30%, transparent);
+  }
+
+  .garden .inactive,
+  .gardenOff {
+    opacity: 0.45;
+  }
+
+  .garden .realGrass {
+    fill: #4e8d3e;
+    fill-opacity: 1;
   }
 
   /* left uncut in the last job */
@@ -854,6 +698,26 @@ const MAP_STYLE = `
     .page.withMap .message {
       grid-column: 1 / -1;
     }
+
+    /* the status and the map side by side and as high as each other, today under both */
+    .page.withMap .status {
+      grid-column: 1;
+      grid-row: 1;
+    }
+
+    /* the map takes the status' height (contain: size, its own doesn't count) */
+    .page.withMap .map {
+      grid-column: 2;
+      grid-row: 1;
+      align-self: stretch;
+      aspect-ratio: auto;
+      max-height: none;
+      contain: size;
+    }
+
+    .page.withMap .today {
+      grid-column: 1 / -1;
+    }
   }
 `;
 
@@ -861,7 +725,7 @@ const MAP_STYLE = `
 // between the rear drive wheels), front ahead of it, rear behind, width wide, and the blade bladeAhead ahead of it and
 // bladeOffset to the left. Nothing without them
 const MAX_BLADE = 0.4;
-function bodyFrom(s) {
+function bodyFrom(s, keepRectangle) {
   const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
   const width = num(s?.width);
   const front = num(s?.front);
@@ -875,7 +739,16 @@ function bodyFrom(s) {
     blade: blade > 0 && blade <= MAX_BLADE ? blade : 0,
     bladeAhead: num(s?.bladeAhead) ?? 0,
     bladeOffset: num(s?.bladeOffset) ?? 0,
+    ...(outlineOf(s?.outline) ? {outline: outlineOf(s.outline)} : {}),
   };
+}
+
+// the body's real contour from above, [ahead, left] in m, as the app and the planner keep it
+function outlineOf(v) {
+  if (!Array.isArray(v) || v.length < 3) return undefined;
+  return v.every((p) => Array.isArray(p) && p.length === 2 && p.every((n) => typeof n === 'number' && Number.isFinite(n)))
+    ? v
+    : undefined;
 }
 
 // the corners of the body and the blade's centre in the map, for the mower at x, y facing heading (rad, ccw)
@@ -884,7 +757,10 @@ function bodyShape(b, x, y, heading) {
   const s = Math.sin(heading);
   const at = (ahead, left) => ({x: x + c * ahead - s * left, y: y + s * ahead + c * left});
   return {
-    corners: [at(b.front, b.width / 2), at(-b.rear, b.width / 2), at(-b.rear, -b.width / 2), at(b.front, -b.width / 2)],
+    // the contour's points, or the rectangle's corners
+    corners: b.outline
+      ? b.outline.map(([ahead, left]) => at(ahead, left))
+      : [at(b.front, b.width / 2), at(-b.rear, b.width / 2), at(-b.rear, -b.width / 2), at(b.front, -b.width / 2)],
     blade: at(b.bladeAhead, b.bladeOffset),
     middle: at((b.front - b.rear) / 2, 0),
   };
@@ -1052,6 +928,7 @@ class MowbiteMap {
       <svg xmlns="${svgNS}" preserveAspectRatio="xMidYMid meet">
         <g class="areas"></g>
         <g class="docks"></g>
+        <g class="edges"></g>
         <g class="leftovers"></g>
         <g class="plan"></g>
         <g class="swath"></g>
@@ -1070,13 +947,13 @@ class MowbiteMap {
     this.svg = section.querySelector('svg');
     this.areas = section.querySelector('.areas');
     this.docks = section.querySelector('.docks');
+    this.edges = section.querySelector('.edges');
     this.tracks = section.querySelector('.tracks');
     this.planLayer = section.querySelector('.plan');
     this.leftoverLayer = section.querySelector('.leftovers');
     this.tightLayer = section.querySelector('.tight');
-    // the plan drawn, and from which point of which path on: only redrawn when that moves
-    this.plan = null;
-    this.planFrom = null;
+    // the plan to do drawn, only drawn again when it changed
+    this.todo = '';
     this.swath = section.querySelector('.swath');
     this.bodyLayer = section.querySelector('.mowerBodyLayer');
     this.mower = section.querySelector('.mowerIcon');
@@ -1103,6 +980,12 @@ class MowbiteMap {
     this.follow = false;
     this.pose = null;
     this.emergency = false;
+    // which way a side view faces, and how fast the mower drives (m/s, for the icons that walk)
+    this.facing = 1;
+    this.speed = 0;
+    // the app's map style: plain or garden, the pictures picked per area, keep the rectangle over a model's outline
+    this.look = {style: null, looks: {}};
+    this.uid = 'mb' + Math.random().toString(36).slice(2, 8);
     this.runs = []; // {blades, points: "x,y x,y", el}
     this.pointers = new Map();
     section.querySelector('.zoomButtons').addEventListener('click', (ev) => {
@@ -1119,6 +1002,11 @@ class MowbiteMap {
     this.svg.addEventListener('pointerup', (ev) => this.up(ev));
     this.svg.addEventListener('pointercancel', (ev) => this.up(ev));
     // icons that keep their size on screen have to follow when the map gets bigger or smaller
+    // the pictures it draws with (setArt), and what they drew: the mower's icons by what they show, the dock's
+    this.art = null;
+    this.mowerIcons = new Map();
+    this.dockIcon = null;
+    this.areasDrawn = 0;
     this.resize = new ResizeObserver(() => this.refresh());
     this.resize.observe(section);
     this.svg.addEventListener(
@@ -1140,6 +1028,7 @@ class MowbiteMap {
   }
 
   destroy() {
+    this.destroyed = true;
     this.resize.disconnect();
     cancelAnimationFrame(this.frame);
     this.frame = 0;
@@ -1161,22 +1050,97 @@ class MowbiteMap {
 
   setMap(map) {
     this.map = map;
-    const order = {nav: 0, mow: 1, obstacle: 2};
-    const areas = [...(map?.areas ?? [])].sort((a, b) => (order[a.properties?.type] ?? 1) - (order[b.properties?.type] ?? 1));
-    this.areas.innerHTML = areas
-      .map((area) => {
-        const p = area.properties ?? {};
-        const cls = [
-          p.type === 'nav' ? 'navArea' : p.type === 'obstacle' ? 'obstacleArea' : 'mowArea',
-          p.active === false ? 'inactive' : '',
-          p.mowable === false ? 'skipMowing' : '',
-        ].join(' ');
-        const points = (area.outline ?? []).map((c) => `${c.x},${-c.y}`).join(' ');
-        return `<polygon class="${cls}" points="${points}"/>`;
-      })
-      .join('');
+    this.drawAreas();
     if (!this.view) this.fit();
     this.drawDocks();
+  }
+
+  // the app's map style and the pictures picked for the areas (its settings), drawn again when they change
+  setLook(settings) {
+    const look = {style: settings?.mapStyle ?? null, looks: settings?.looks ?? {}};
+    if (JSON.stringify(look) === JSON.stringify(this.look)) return;
+    this.look = look;
+    this.drawAreas();
+  }
+
+  setSpeed(speed) {
+    this.speed = speed;
+  }
+
+  // the app's pictures (BundledArt or the mower's own SandboxArt), everything drawn with them again
+  setArt(art) {
+    if (art === this.art) return;
+    this.art = art;
+    this.mowerIcons = new Map();
+    this.dockIcon = null;
+    this.drawAreas();
+    this.drawDocks();
+    this.mower.dataset.key = '';
+    this.drawMower();
+  }
+
+  // the areas as the app draws them: biggest first, plain in their colors or in the garden style as lawn in stripes
+  // along its mowing direction, ways and obstacles as their pictures. with the mower's sizes the real edges too: the
+  // outlines are the middle of the mower, its body reaches half its width further
+  drawAreas() {
+    const map = this.map;
+    if (!map) {
+      this.areas.innerHTML = '';
+      this.edges.innerHTML = '';
+      return;
+    }
+    const size = (a) => Math.abs((a.outline ?? []).reduce((sum, p, i, o) => sum + p.x * o[(i + 1) % o.length].y - o[(i + 1) % o.length].x * p.y, 0));
+    const areas = [...(map.areas ?? [])].sort((a, b) => size(b) - size(a));
+    // the areas are drawn in the app's own units: its 400 wide square with the whole map fitted in 20 from the edge.
+    // the garden's pictures and textures have sizes in those units, and their stripes start at its corner
+    const all = (map.areas ?? []).flatMap((a) => a.outline ?? []);
+    const xs = all.map((p) => p.x);
+    const ys = all.map((p) => p.y);
+    const [minX, maxX, minY, maxY] = all.length ? [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)] : [0, 1, 0, 1];
+    const m = Math.min(360 / (maxX - minX || 1), 360 / (maxY - minY || 1));
+    const padX = 20 + (360 - (maxX - minX) * m) / 2;
+    const padY = 20 + (360 - (maxY - minY) * m) / 2;
+    const app = (p) => `${((p.x - minX) * m + padX).toFixed(2)},${(400 - ((p.y - minY) * m + padY)).toFixed(2)}`;
+    const toMap = `translate(${minX - padX / m} ${-minY - (400 - padY) / m}) scale(${1 / m})`;
+    const garden = this.look.style === 'garden';
+    const uid = this.uid;
+    const draw = (art) => {
+      const fills = art?.fills ?? {};
+      const things = art?.things ?? {};
+      const drawn = areas.map((area) => {
+        const p = area.properties ?? {};
+        const cls = [
+          p.type === 'nav' ? 'navArea' : p.type === 'obstacle' ? 'obstacleArea' : p.type === 'mow' ? 'mowArea' : 'draftArea',
+          p.active === false ? 'inactive' : '',
+          p.mowable === false ? 'skipMowing' : '',
+        ]
+          .filter(Boolean)
+          .join(' ');
+        const fill = garden && fills[area.id] ? ` style="fill:url(#${uid}${fills[area.id]});fill-opacity:1"` : '';
+        let out = `<polygon class="${cls}" points="${(area.outline ?? []).map(app).join(' ')}"${fill}/>`;
+        const thing = garden ? things[area.id] : null;
+        if (thing) out += `<g class="gardenThing${p.active === false ? ' gardenOff' : ''}" clip-path="url(#${uid}clip${thing.i})">${thing.svg}</g>`;
+        return out;
+      });
+      const edges = art?.edges;
+      const isGarden = garden && !!art;
+      this.svg.classList.toggle('garden', isGarden);
+      // the page shows a little through the garden's paving, like in the app
+      this.section.classList.toggle('gardenMap', isGarden);
+      this.areas.innerHTML =
+        (edges?.outside ? `<path class="realGrass" d="${edges.outside}"/>` : '') +
+        `<g transform="${toMap}">${garden ? (art?.defs ?? '') : ''}${drawn.join('')}</g>` +
+        (edges?.obstacles ? `<path class="realGrass" d="${edges.obstacles}"/>` : '');
+      this.edges.innerHTML = edges?.line ? `<path class="realEdge" d="${edges.line}"/>` : '';
+    };
+    // the plain areas right away, the garden and the real edges once the pictures worked them out
+    const turn = ++this.areasDrawn;
+    if (!this.areas.firstChild) draw(null);
+    if (!this.art || (!garden && !this.body)) return draw(null);
+    this.art
+      .call('areas', {areas: map.areas ?? [], looks: this.look.looks, body: this.body, garden, uid, fit: {minX, minY, m, padX, padY}})
+      .then((art) => turn === this.areasDrawn && !this.destroyed && draw(art))
+      .catch(() => turn === this.areasDrawn && draw(null));
   }
 
   setIcons(icons) {
@@ -1216,33 +1180,15 @@ class MowbiteMap {
     else this.growSwath(added);
   }
 
-  // what's still to mow of the area being mowed: its plan from where the mower is on, the rest of the path it's on
-  // and the paths after it. at is robot_state's [current_path, current_path_index] (the pose in the path)
-  setPlan(plan, at) {
-    let from = null;
-    if (plan && Array.isArray(at) && at[0] >= 0 && at[0] < plan.paths.length) {
-      const index = plan.paths[at[0]].pose_index;
-      let point = 0;
-      if (index.length) {
-        while (point < index.length - 1 && index[point + 1] <= at[1]) point++;
-      }
-      from = `${at[0]}:${point}`;
-    }
-    if (plan === this.plan && from === this.planFrom) return;
-    this.plan = plan;
-    this.planFrom = from;
-    if (!from) {
-      this.planLayer.innerHTML = '';
-      return;
-    }
-    const [path, point] = from.split(':').map(Number);
-    this.planLayer.innerHTML = plan.paths
-      .slice(path)
-      .map((p, i) => {
-        const points = (i === 0 ? p.points.slice(point) : p.points).map(([x, y]) => `${x},${-y}`).join(' ');
-        return points ? `<polyline class="${p.outline ? 'planOutline' : 'planLane'}" points="${points}"/>` : '';
-      })
+  // what's still to do of the area being mowed, from the app's plan progress (a list of point lists)
+  setTodo(todo) {
+    const d = (todo ?? [])
+      .filter((p) => p.length > 1)
+      .map((p) => p.map((q, i) => `${i ? 'L' : 'M'}${q.x.toFixed(2)} ${(-q.y).toFixed(2)}`).join(''))
       .join('');
+    if (d === this.todo) return;
+    this.todo = d;
+    this.planLayer.innerHTML = d ? `<path class="planTodo" d="${d}"/>` : '';
   }
 
   // what the last job left uncut, as the planner found it
@@ -1263,6 +1209,7 @@ class MowbiteMap {
   setBody(body) {
     if (JSON.stringify(body) === JSON.stringify(this.body)) return;
     this.body = body;
+    this.drawAreas();
     this.drawSwath();
     this.drawDocks();
     this.drawMower();
@@ -1445,8 +1392,21 @@ class MowbiteMap {
   drawDocks() {
     if (!this.view) return;
     const k = this.k;
-    const icon = MAP_DOCKS[this.icons.dock] ?? MAP_DOCKS.dot;
+    const key = this.icons.dock ?? '';
+    if (this.art && this.dockIcon?.asked !== key) {
+      this.dockIcon = {asked: key};
+      this.art
+        .call('dock', key)
+        .then((icon) => {
+          if (this.dockIcon?.asked !== key) return;
+          this.dockIcon = {asked: key, ...icon};
+          this.drawDocks();
+        })
+        .catch(() => {});
+    }
+    const icon = this.dockIcon?.svg !== undefined ? this.dockIcon : FALLBACK_DOCK;
     const size = this.icons.dockSize ?? 1;
+    const drawn = icon.svg ?? icon.draw();
     this.docks.innerHTML = (this.map?.docking_stations ?? [])
       .map((station) => {
         const deg = (-station.heading * 180) / Math.PI;
@@ -1458,9 +1418,9 @@ class MowbiteMap {
           const x = station.position.x + Math.cos(station.heading) * ahead;
           const y = station.position.y + Math.sin(station.heading) * ahead;
           const half = Math.max(length / 2, (ICON_PX * size) / k);
-          return `<g transform="translate(${x} ${-y}) rotate(${deg}) scale(${half})">${icon.draw()}</g>`;
+          return `<g class="dock" transform="translate(${x} ${-y}) rotate(${deg}) scale(${half})">${drawn}</g>`;
         }
-        return `<g transform="translate(${station.position.x} ${-station.position.y}) scale(${(ICON_PX * size) / k})">${icon.draw()}</g>`;
+        return `<g class="dock" transform="translate(${station.position.x} ${-station.position.y}) scale(${(ICON_PX * size) / k})">${drawn}</g>`;
       })
       .join('');
   }
@@ -1476,8 +1436,15 @@ class MowbiteMap {
     }
     const k = this.k;
     const body = this.body;
-    const icon = MAP_MOWERS[this.icons.mower] ?? MAP_MOWERS.triangle;
+    // the icon's kind (fit, side, upright) is known once one of its drawings came
+    const known = this.mowerIcons.get(this.icons.mower ?? '');
+    const icon = known?.meta ?? FALLBACK_MOWER;
     const shape = body ? bodyShape(body, pose.x, pose.y, pose.heading) : null;
+    // which way a side view faces: it only turns once the mower clearly heads the other way, so it doesn't flicker
+    // while the mower drives up or down the map
+    const across = Math.cos(pose.heading);
+    if (across > 0.3) this.facing = 1;
+    else if (across < -0.3) this.facing = -1;
     // svg y points down, so the map's ccw heading becomes a cw rotation
     const deg = (-pose.heading * 180) / Math.PI;
 
@@ -1492,15 +1459,33 @@ class MowbiteMap {
     // a real mower from above lies exactly on its body, other icons the same size on screen as the dock or at their
     // real size (never smaller than a few pixels), in the middle of the body with the sizes set
     const onBody = !!(icon.fit && shape);
-    const key = `${this.icons.mower}|${this.emergency}|${onBody}`;
+    // a figure's legs and a pushed mower walk with the speed, a tenth of a m/s is close enough
+    const speed = Math.round((this.speed ?? 0) * 10) / 10;
+    const blades = !!pose.blades;
+    const look = `${this.emergency}|${speed}|${blades}`;
+    const drawing = this.mowerDrawing(look, {speed, emergency: this.emergency, blades});
+    const key = `${this.icons.mower}|${look}|${onBody}|${drawing ? 'art' : ''}`;
     if (this.mower.dataset.key !== key) {
-      const drawn = icon.draw(this.emergency);
-      this.mower.innerHTML = `<g>${icon.fit && !onBody ? `<g transform="scale(1 ${icon.fit})">${drawn}</g>` : drawn}</g>`;
+      const drawn = drawing ?? FALLBACK_MOWER.draw();
+      // a side view heading left would stand on its head, mirrored it keeps its feet on the ground, a figure only
+      // looks left or right: turned by css, so it turns around instead of flipping over at once
+      const inner = onBody ? drawn : icon.fit ? `<g transform="scale(1 ${icon.fit})">${drawn}</g>` : drawn;
+      this.mower.innerHTML = `<g class="mower"><g class="turn">${inner}</g></g>`;
       this.mower.dataset.key = key;
     }
+    const turn = onBody || !icon.side ? '' : icon.upright ? `scaleX(${this.facing})` : `scaleY(${this.facing})`;
+    const turnEl = this.mower.firstElementChild.firstElementChild;
+    if (turnEl.style.transform !== turn) turnEl.style.transform = turn;
     let transform;
     if (onBody) {
       transform = `translate(${shape.middle.x} ${-shape.middle.y}) rotate(${deg}) scale(${(body.front + body.rear) / 2} ${body.width / 2})`;
+    } else if (icon.upright) {
+      // a figure isn't turned with the heading at all, it stands upright at the mower
+      const at = this.icons.mowerRealSize && shape ? shape.middle : pose;
+      const realSize = this.icons.mowerRealSize && shape ? (body.front + body.rear) / 2 : MOWER_SIZE;
+      const base = this.icons.mowerRealSize ? Math.max(realSize, 7 / k) : ICON_PX / k;
+      const size = base * (this.icons.mowerRealSize && shape ? 1 : (this.icons.mowerSize ?? 1));
+      transform = `translate(${at.x} ${-at.y}) scale(${size})`;
     } else {
       const real = this.icons.mowerRealSize ? shape : null;
       const at = real ? real.middle : pose;
@@ -1511,6 +1496,27 @@ class MowbiteMap {
     }
     this.mower.firstElementChild.setAttribute('transform', transform);
     this.drawBlade(shape, k);
+  }
+
+  // the mower's icon as the pictures draw it for how it looks now (emergency, speed, blades), asked once and kept.
+  // null while it's being asked, it's drawn again when it came
+  mowerDrawing(look, o) {
+    if (!this.art) return null;
+    const key = this.icons.mower ?? '';
+    let icon = this.mowerIcons.get(key);
+    if (!icon) this.mowerIcons.set(key, (icon = {meta: null, drawings: new Map()}));
+    if (icon.drawings.has(look)) return icon.drawings.get(look);
+    icon.drawings.set(look, null);
+    this.art
+      .call('mower', key, o)
+      .then((drawn) => {
+        icon.meta = {fit: drawn.fit, side: drawn.side, upright: drawn.upright};
+        icon.drawings.set(look, drawn.svg);
+        this.mower.dataset.key = '';
+        this.drawMower();
+      })
+      .catch(() => icon.drawings.delete(look));
+    return null;
   }
 
   // over the icon: the blade where it sits under the mower, filled while it's on, and the point OpenMower follows
@@ -1573,6 +1579,235 @@ class MowbiteMap {
   }
 }
 
+// the app's own logic for the dashboard (mowbite-app.js, built from MowBite by scripts/build-art.mjs): one copy per
+// mower, it keeps what it asked (the day's events, the schedule) like the app does for the mower it shows
+const appModules = new Map();
+function loadApp(entity) {
+  if (!appModules.has(entity)) {
+    const search = new URL(import.meta.url).search;
+    const url = new URL(`mowbite-app.js${search}${search ? '&' : '?'}mower=${encodeURIComponent(entity)}`, import.meta.url);
+    appModules.set(
+      entity,
+      import(url.href).catch((err) => {
+        console.warn('MowBite card: the dashboard logic is missing', err);
+        appModules.delete(entity);
+        return null;
+      }),
+    );
+  }
+  return appModules.get(entity);
+}
+
+// how many runs the dashboard can show (six finished and one under way), and how many earlier days are looked
+// through for them (the app's useRecentRuns)
+const LATEST = 7;
+const LATEST_DAYS = 7;
+// the start the schedule left out, closed on this device, by its time
+const MISSED_SEEN_KEY = 'mowbite-scheduleMissedSeen';
+
+// What the dashboard asks the mower and the app, the way the app's dashboard does: the day's runs (again every 30 s
+// and right away when the state changes), why an emergency stop is on, the wifi, the schedule and its log,
+// maintenance due, and how far the mower got with the area it mows
+class Dashboard {
+  constructor(card, app) {
+    this.card = card;
+    this.app = app;
+    this.timers = [];
+    this.recent = null;
+    this.wifi = undefined;
+    this.schedule = null;
+    this.log = [];
+    this.due = [];
+    this.reasons = null;
+    this.methods = null;
+    this.state = undefined;
+    this.emergency = false;
+    this.plan = null;
+    this.asking = null;
+    this.leftoverRun = null;
+    app.setTransport({rpc: (method, params, timeout) => card._rpc(method, params, timeout), get: (path) => card._get(path)});
+    app.setLanguage(card._lang);
+    const every = (f, ms) => {
+      f();
+      this.timers.push(setInterval(f, ms));
+    };
+    every(() => this.loadRuns(), 30000);
+    every(() => this.loadWifi(), 30000);
+    every(() => this.loadLog(), 60000);
+    every(() => this.loadSchedule(), 10 * 60000);
+    every(() => this.loadDue(), 10 * 60000);
+    every(() => this.card._update(), 10000);
+    void this.loadMethods();
+  }
+
+  stop() {
+    this.stopped = true;
+    for (const t of this.timers) clearInterval(t);
+    clearInterval(this.reasonTimer);
+  }
+
+  changed() {
+    if (!this.stopped) this.card._update();
+  }
+
+  // the rpcs the mower has: the leftovers only with the MowBite Planner
+  async loadMethods() {
+    this.methods = await this.app.rpcMethods().catch(() => null);
+    this.changed();
+  }
+
+  // the state changed: there's something new in the history, it's asked again right away (forgetToday)
+  setState(state, emergency) {
+    if (state !== this.state) {
+      const first = this.state === undefined;
+      this.state = state;
+      if (!first) {
+        this.app.history.forgetToday();
+        void this.loadRuns();
+      }
+    }
+    if (emergency !== this.emergency) {
+      this.emergency = emergency;
+      this.reasons = null;
+      clearInterval(this.reasonTimer);
+      if (emergency) {
+        // why it's on, from the ros log: when it comes on and every half minute while it lasts
+        const ask = () =>
+          void this.app.roslog
+            .rosLogAround(Date.now() / 1000, 12 * 3600, 60)
+            .then((lines) => {
+              if (this.emergency) this.reasons = this.app.roslog.emergencyReasons(lines);
+              this.changed();
+            })
+            .catch(() => {});
+        ask();
+        this.reasonTimer = setInterval(ask, 30000);
+      }
+    }
+  }
+
+  async loadRuns() {
+    const {history, events} = this.app;
+    try {
+      const files = await history.historyDays();
+      const todayKey = history.fileDay(new Date());
+      const today = (await history.eventsOfDay(files, todayKey)).events;
+      const runs = events.groupRuns(today, true).flatMap((e) => (e.kind === 'run' ? [e.run] : []));
+      const latest = [...runs].reverse();
+      for (const d of history.localDays(files).filter((d) => d !== todayKey).slice(0, LATEST_DAYS)) {
+        if (latest.length >= LATEST) break;
+        const old = events.groupRuns((await history.eventsOfDay(files, d)).events, false);
+        latest.push(...old.flatMap((e) => (e.kind === 'run' ? [e.run] : [])).reverse());
+      }
+      this.recent = {today, runs, latest: latest.slice(0, LATEST)};
+    } catch {
+      // no event history: the mower can't be reached, or its OpenMower doesn't keep one
+    }
+    this.changed();
+  }
+
+  async loadWifi() {
+    const s = await this.app.system.loadSystem().catch(() => null);
+    this.wifi = s && !s.remote ? s.wifiSignal : undefined;
+    this.changed();
+  }
+
+  async loadSchedule() {
+    this.schedule = await this.app.schedule.loadSchedule().catch(() => null);
+    this.changed();
+  }
+
+  async loadLog() {
+    this.log = (await this.app.schedule.loadScheduleLog().catch(() => null)) ?? [];
+    this.changed();
+  }
+
+  async loadDue() {
+    const {stats} = this.app;
+    const s = await stats.loadStats().catch(() => null);
+    this.due = s ? stats.dueParts(s).map((p) => ({key: p.key, used: stats.partUse(s, p).seconds / 3600, due: p.dueHours})) : [];
+    this.changed();
+  }
+
+  // the start the schedule left out, until it's closed on this device
+  get missed() {
+    const missed = this.schedule?.enabled ? this.app.schedule.missedStart(this.log) : null;
+    let seen = 0;
+    try {
+      seen = Number(localStorage.getItem(MISSED_SEEN_KEY)) || 0;
+    } catch {}
+    return missed && missed.t !== seen ? missed : null;
+  }
+
+  closeMissed(t) {
+    try {
+      localStorage.setItem(MISSED_SEEN_KEY, String(t));
+    } catch {}
+    this.changed();
+  }
+
+  planned(datum) {
+    if (!this.schedule) return null;
+    return this.app.schedule.nextStart(this.schedule, undefined, datum ? this.app.sun.sunTimes(datum.lat, datum.lon) : null);
+  }
+
+  // how far the mower got with the area it mows (the app's usePlanProgress): its plan, where robot_state says it is
+  // in it, and the time left from how fast the plan got done while the blades ran in the area
+  progress(state, map) {
+    const {areaPlan, planProgress, leftovers} = this.app;
+    const areaId =
+      state?.current_state === 'MOWING' && map && (state.current_area ?? -1) >= 0
+        ? (map.areas ?? []).filter((a) => a.properties?.type === 'mow')[state.current_area]?.id
+        : undefined;
+    if (!areaId) return null;
+    const events = this.recent?.today;
+    // when the mower started on the area: its latest AREA event. the MowBite Planner may have handed out the
+    // leftovers of the last mow in place of the plan, the plan doesn't fit then
+    const since = events?.filter((e) => e.type === 'AREA' && e.area_id === areaId).at(-1)?.t;
+    const key = `${areaId} ${since}`;
+    if (since && this.leftoverRun?.key !== key) {
+      this.leftoverRun = {key, yes: false};
+      const look = () =>
+        void leftovers.leftoversHandedOut(areaId, since).then(
+          (yes) => {
+            if (this.leftoverRun?.key !== key) return;
+            if (yes) {
+              this.leftoverRun.yes = true;
+              this.changed();
+            } else if (Date.now() / 1000 - since < 120) setTimeout(look, 20000);
+          },
+          () => {},
+        );
+      look();
+    }
+    const leftoverRun = !!since && this.leftoverRun?.key === key && this.leftoverRun.yes;
+    if (leftoverRun) return {done: [], todo: [], doneLength: 0, todoLength: 0, fraction: 0, areaId, secondsLeft: null, leftovers: true};
+    if (this.plan?.areaId !== areaId && this.asking !== areaId) {
+      this.asking = areaId;
+      areaPlan
+        .mowerPaths(areaId, map)
+        .then((paths) => {
+          this.plan = paths ? {areaId, paths} : null;
+        })
+        .catch(() => {
+          this.plan = null;
+        })
+        .finally(() => {
+          this.asking = null;
+          this.changed();
+        });
+    }
+    const path = state.current_path ?? -1;
+    const progress = this.plan?.areaId === areaId && path >= 0 ? planProgress.splitPlan(this.plan.paths, path, state.current_path_index ?? 0) : null;
+    if (!progress) return null;
+    const seconds = events ? planProgress.bladeSeconds(events, areaId, Date.now() / 1000) : 0;
+    const rate = seconds > 60 && progress.doneLength > 5 ? progress.doneLength / seconds : null;
+    if (rate && seconds > 600) planProgress.saveRate(rate);
+    const r = rate ?? planProgress.savedRate();
+    return {...progress, areaId, secondsLeft: r ? progress.todoLength / r : null};
+  }
+}
+
 class MowbiteCard extends HTMLElement {
   static getConfigForm() {
     return {
@@ -1585,6 +1820,8 @@ class MowbiteCard extends HTMLElement {
               mode: 'dropdown',
               options: [
                 {value: 'frost', label: 'Frosted glass'},
+                {value: 'aurora', label: 'Aurora'},
+                {value: 'sunny', label: 'Sunny'},
                 {value: 'dark', label: 'Dark'},
                 {value: 'light', label: 'Light'},
                 {value: 'auto', label: 'Like Home Assistant'},
@@ -1609,6 +1846,8 @@ class MowbiteCard extends HTMLElement {
         },
         {name: 'map_height', selector: {number: {min: 150, max: 1000, step: 10, mode: 'box', unit_of_measurement: 'px'}}},
         {name: 'status', selector: {boolean: {}}},
+        {name: 'today', selector: {boolean: {}}},
+        {name: 'leftovers', selector: {boolean: {}}},
         {name: 'blur', selector: {boolean: {}}},
       ],
       computeLabel: (schema) =>
@@ -1618,6 +1857,8 @@ class MowbiteCard extends HTMLElement {
           map: 'Map',
           map_height: 'Map height (empty: square like in the app)',
           status: 'Status and buttons',
+          today: 'Today: what was mowed, the last runs, the next start',
+          leftovers: 'Check the last mow for leftovers',
           blur: 'Blur behind the glass (slower on old tablets)',
         })[schema.name],
     };
@@ -1638,11 +1879,19 @@ class MowbiteCard extends HTMLElement {
     this._unsub = null;
     this._subscribing = false;
     this._retry = null;
-    this._skipLeft = null;
+    this._skip = null;
     this._skipTimer = null;
     this._confirmReset = false;
+    // the app's dashboard logic and what it asked, the leftovers card's state, the last runs unfolded
+    this._app = null;
+    this._dash = null;
+    this._leftovers = {};
+    this._moreRuns = false;
     this._pose = null;
     this._speed = 0;
+    // the pictures it draws with (artFor), and the body worked out with them
+    this._art = null;
+    this._bodyAsked = null;
     this._built = false;
     this._mapData = null;
     this._settings = {};
@@ -1653,7 +1902,7 @@ class MowbiteCard extends HTMLElement {
   setConfig(config) {
     if (!config || !config.entity) throw new Error('entity: the MowBite lawn mower, e.g. lawn_mower.openmower');
     const changed = this._config && this._config.entity !== config.entity;
-    this._config = {theme: 'frost', map: 'integration', status: true, blur: true, ...config};
+    this._config = {theme: 'frost', map: 'integration', status: true, today: true, leftovers: true, blur: true, ...config};
     if (changed) {
       this._unsubscribe();
       this._data = null;
@@ -1661,19 +1910,50 @@ class MowbiteCard extends HTMLElement {
       this._track = null;
     }
     this._built = false;
+    if (changed) {
+      this._stopDashboard();
+      this._art?.listeners.delete(this._onArt);
+      this._art = null;
+    }
     this._render();
     this._subscribe();
+    this._startDashboard();
   }
 
   set hass(hass) {
     const first = !this._hass;
     this._hass = hass;
+    this._app?.setLanguage(this._lang);
     this._applyLook();
     if (first) {
       // the waiting text was drawn before the language was known
       this._update();
       this._subscribe();
+      this._startDashboard();
     }
+  }
+
+  // the app's own logic for the dashboard, its looks with it: drawn again once they're there
+  _startDashboard() {
+    this._useArt();
+    if (this._dash || this._starting || !this._hass || !this._config || !this.isConnected) return;
+    const entity = this._config.entity;
+    this._starting = true;
+    loadApp(entity).then((app) => {
+      this._starting = false;
+      if (!app || this._dash || entity !== this._config?.entity || !this.isConnected) return;
+      const restyle = !this._app;
+      this._app = app;
+      app.setLanguage(this._lang);
+      this._dash = new Dashboard(this, app);
+      if (restyle && this._built) this._render();
+      else this._update();
+    });
+  }
+
+  _stopDashboard() {
+    this._dash?.stop();
+    this._dash = null;
   }
 
   get hass() {
@@ -1683,6 +1963,7 @@ class MowbiteCard extends HTMLElement {
   connectedCallback() {
     if (!this._built && this._config) this._render();
     this._subscribe();
+    this._startDashboard();
   }
 
   disconnectedCallback() {
@@ -1691,9 +1972,8 @@ class MowbiteCard extends HTMLElement {
     this._built = false;
     this._unsubscribe();
     clearTimeout(this._retry);
-    clearInterval(this._skipTimer);
-    this._skipTimer = null;
-    this._skipLeft = null;
+    this._stopSkip();
+    this._stopDashboard();
   }
 
   getCardSize() {
@@ -1750,16 +2030,15 @@ class MowbiteCard extends HTMLElement {
       this._settings = data.settings ?? {};
       this._applyLook();
       this._map?.setIcons(this._settings.icons);
+      this._map?.setLook(this._settings);
     }
-    // the app's sizes, the planner's (measured on the mower), the ones set in the integration
-    this._body = bodyFrom(this._settings?.mower) ?? bodyFrom(data.planner_sizes) ?? bodyFrom(data.mower_sizes);
-    this._map?.setBody(this._body);
+    this._updateBody();
+    this._map?.setSpeed(this._speed);
     if ('planning' in data) {
       this._planning = data.planning;
       this._map?.setLeftovers(data.planning.leftovers);
       this._map?.setTight(data.planning.tight);
     }
-    this._map?.setPlan(this._planning?.plan ?? null, data.plan_at);
     if (data.track) {
       // the whole track again after a reset, otherwise only the new points
       if (data.track.reset || !this._track) this._track = {reset: true, points: [...data.track.points]};
@@ -1767,6 +2046,61 @@ class MowbiteCard extends HTMLElement {
       this._map?.setTrack(data.track);
     }
     this._update();
+  }
+
+  // the app's sizes, the planner's (measured on the mower), the ones set in the integration
+  _updateBody() {
+    const data = this._data ?? {};
+    // like the app: the planner's sizes (measured on the mower, with its outline) first, then the app's
+    const planner = bodyFrom(data.planner_sizes);
+    const sizes = planner ? null : this._settings?.mower ?? data.mower_sizes;
+    this._body = planner ?? bodyFrom(sizes);
+    this._map?.setBody(this._body);
+    // sizes that are exactly a model's with a measured outline get that outline, as the app's pictures know them
+    // (not the planner's, it has its own outline or none)
+    const key = JSON.stringify([sizes, this._settings?.keepRectangle, !!this._art]);
+    if (!sizes || !this._art || key === this._bodyAsked) return;
+    this._bodyAsked = key;
+    this._art.art
+      .call('body', sizes, this._settings?.keepRectangle)
+      .then((body) => {
+        if (this._bodyAsked !== key || !body) return;
+        this._body = body;
+        this._map?.setBody(body);
+      })
+      .catch(() => {});
+  }
+
+  // the pictures this mower draws with: the integration's until the mower's own are there
+  _useArt() {
+    if (this._art || !this._hass || !this._config) return;
+    this._art = artFor(this);
+    this._onArt = (art) => {
+      this._map?.setArt(art);
+      this._bodyAsked = null;
+      this._updateBody();
+    };
+    this._art.listeners.add(this._onArt);
+    this._onArt(this._art.art);
+  }
+
+  // the mower's rpc and the app's endpoints for the app's dashboard logic, read only (the integration checks it)
+  async _rpc(method, params, timeout) {
+    try {
+      const answer = await this._hass.callWS({type: 'mowbite/rpc', entity_id: this._config.entity, method, params: params ?? {}});
+      return answer.result;
+    } catch (err) {
+      const code = String(err?.code ?? '');
+      throw {code: code.startsWith('rpc_') ? Number(code.slice(4)) : code === 'timeout' ? 'timeout' : code, message: err?.message};
+    }
+  }
+
+  async _get(path) {
+    try {
+      return await this._hass.callWS({type: 'mowbite/app', entity_id: this._config.entity, path});
+    } catch {
+      return {status: 502, body: ''};
+    }
   }
 
   async _action(name) {
@@ -1805,17 +2139,21 @@ class MowbiteCard extends HTMLElement {
     return lang.toLowerCase().startsWith('de') ? 'de' : 'en';
   }
 
+  // the app's own words (its language files), the card's own for what only the card says
   _t(text, values) {
-    let s = (this._lang === 'de' && DE[text]) || text;
+    const app = this._app?.tr(text);
+    let s = app !== undefined && app !== text ? app : (this._lang === 'de' && DE[text]) || text;
     for (const [k, v] of Object.entries(values ?? {})) s = s.replace(`{${k}}`, v);
     return s;
   }
 
   _fmt(n, digits = 0) {
+    if (this._app) return this._app.fmt(n, digits);
     return new Intl.NumberFormat(this._lang, {minimumFractionDigits: digits, maximumFractionDigits: digits}).format(n);
   }
 
   _clock(seconds, withSeconds = false) {
+    if (this._app) return this._app.dates.clock(seconds, withSeconds);
     return new Date(seconds * 1000).toLocaleTimeString(this._lang, {
       hour: '2-digit',
       minute: '2-digit',
@@ -1832,7 +2170,7 @@ class MowbiteCard extends HTMLElement {
     root.lang = this._lang;
     let theme = this._config?.theme ?? 'frost';
     if (theme === 'auto') theme = this._hass?.themes?.darkMode ? 'dark' : 'light';
-    for (const t of ['frost', 'dark', 'light']) root.classList.toggle(t, t === theme);
+    for (const t of THEMES) root.classList.toggle(t, t === theme);
     root.classList.toggle('noblur', this._config?.blur === false);
     const mapSection = this.shadowRoot.querySelector('.map');
     const height = Number(this._config?.map_height);
@@ -1847,7 +2185,7 @@ class MowbiteCard extends HTMLElement {
 
   _render() {
     this.shadowRoot.innerHTML = `
-      <style>${STYLE}${MAP_STYLE}</style>
+      <style>${STYLE}${this._app?.DASHBOARD_CSS ?? ''}${MAP_STYLE}</style>
       <ha-card>
         <div class="mb frost">
           <div class="page">
@@ -1856,46 +2194,64 @@ class MowbiteCard extends HTMLElement {
               <div class="statusTop">
                 <div class="ring">
                   <svg viewBox="0 0 80 80"><circle cx="40" cy="40" r="34" class="ringBg"/><circle cx="40" cy="40" r="34" class="ringFill"/></svg>
-                  <div><strong class="percent"></strong><span class="charging"></span></div>
+                  <div><strong class="percent"></strong></div>
                 </div>
-                <div class="headline"><h2></h2><span class="sub dim"></span></div>
+                <div class="headline"><h2></h2><strong class="reason" hidden></strong><span class="sub dim"></span></div>
               </div>
-              <div class="facts info"></div>
-              <div class="facts temps"></div>
+              <div class="factBlock">
+                <div class="facts info"></div>
+                <div class="facts temps"></div>
+              </div>
               <div class="controls">
+                <button class="reset" data-button="reset_emergency" hidden></button>
                 <button class="main" data-button="start"></button>
                 <button data-button="pause"></button>
                 <button data-button="home"></button>
                 <button data-button="skip"></button>
+                <button class="skipPathButton" data-button="skip_path" hidden></button>
                 <button class="resetJobButton" data-button="ask_reset_job" hidden></button>
                 <div class="resetJob" hidden>
                   <span></span>
                   <button class="reset" data-button="reset_job"></button>
                   <button data-button="cancel_reset_job"></button>
                 </div>
-                <button class="reset" data-button="reset_emergency" hidden></button>
+                <div class="leftovers" hidden></div>
               </div>
               <div class="wordmark"><strong>mow</strong>bite</div>
             </section>
             <section class="map" hidden></section>
+            <section class="today" hidden>
+              <div class="todayHead"><h2></h2></div>
+              <div class="missed schedMissed" hidden>${ICONS.warning}<a><strong></strong><span></span></a><button data-button="close_missed">×</button></div>
+              <div class="missed maintenance" hidden>${ICONS.warning}<a><strong></strong><span></span></a></div>
+              <div class="todayNumbers" hidden>
+                <div><strong class="mowed"></strong><span class="mowedLabel"></span></div>
+                <div><strong class="runCount"></strong><span class="runLabel"></span></div>
+                <div class="problemsBox"><strong class="problemCount"></strong><span class="problemLabel"></span></div>
+              </div>
+              <span class="nextRun" hidden></span>
+              <span class="label runsLabel" hidden></span>
+              <div class="runList" hidden></div>
+            </section>
           </div>
         </div>
       </ha-card>`;
-    this.shadowRoot.querySelector('.controls').addEventListener('click', (ev) => {
+    this.shadowRoot.querySelector('.page').addEventListener('click', (ev) => {
       const button = ev.target.closest('button');
-      if (button && !button.disabled) this._press(button.dataset.button);
+      if (button && !button.disabled && button.dataset.button) this._press(button.dataset.button);
     });
     this._built = true;
     this._map?.destroy();
     this._map = new MowbiteMap(this.shadowRoot.querySelector('.map'));
+    if (this._art) this._map.setArt(this._art.art);
     this._map.setIcons(this._settings?.icons);
+    this._map.setLook(this._settings);
     this._map.setBody(this._body ?? null);
     if (this._mapData) this._map.setMap(this._mapData);
     if (this._track) this._map.setTrack(this._track);
     if (this._planning) {
       this._map.setLeftovers(this._planning.leftovers);
       this._map.setTight(this._planning.tight);
-      this._map.setPlan(this._planning.plan ?? null, this._data?.plan_at);
     }
     this._applyLook();
     this._update();
@@ -1912,9 +2268,9 @@ class MowbiteCard extends HTMLElement {
       case 'home':
         return this._action('home');
       case 'skip':
-        if (this._skipLeft === null) this._startSkip();
-        else this._stopSkip();
-        return this._update();
+        return this._toggleSkip('skip_area');
+      case 'skip_path':
+        return this._toggleSkip('skip_path');
       case 'ask_reset_job':
         this._confirmReset = true;
         return this._update();
@@ -1927,27 +2283,82 @@ class MowbiteCard extends HTMLElement {
         return this._action('reset_job');
       case 'reset_emergency':
         return this._action('reset_emergency');
+      case 'check_leftovers':
+        return this._checkLeftovers();
+      case 'mow_leftovers':
+        return this._mowLeftovers();
+      case 'close_leftovers':
+        this._leftovers = {};
+        return this._update();
+      case 'close_missed':
+        return this._dash?.closeMissed(this._dash.missed?.t);
+      case 'more_runs':
+        this._moreRuns = !this._moreRuns;
+        return this._update();
     }
   }
 
-  _startSkip() {
-    this._skipLeft = SKIP_DELAY;
+  // a tapped skip (area or path) goes out after a few seconds, a second tap takes it back
+  _toggleSkip(name) {
+    if (this._skip?.name === name) {
+      this._stopSkip();
+      return this._update();
+    }
+    this._stopSkip();
+    this._skip = {name, left: SKIP_DELAY};
     this._skipTimer = setInterval(() => {
-      if (this._skipLeft > 1) {
-        this._skipLeft--;
+      if (this._skip.left > 1) {
+        this._skip.left--;
         this._update();
         return;
       }
       this._stopSkip();
       this._update();
-      this._action('skip_area');
+      this._action(name);
     }, 1000);
+    this._update();
   }
 
   _stopSkip() {
     clearInterval(this._skipTimer);
     this._skipTimer = null;
-    this._skipLeft = null;
+    this._skip = null;
+  }
+
+  // what the last finished mow left unmowed, as the MowBite Planner finds it on its track (the app's LeftoversCard)
+  async _checkLeftovers() {
+    const app = this._app;
+    if (!app) return;
+    this._leftovers = {busy: true};
+    this._update();
+    try {
+      const found = await app.leftovers.askLeftovers({jobId: this._leftoverJob()});
+      this._leftovers = found ? {found} : {};
+    } catch (err) {
+      this._leftovers = {error: this._leftoversError(err)};
+    }
+    this._update();
+  }
+
+  async _mowLeftovers() {
+    this._leftovers = {...this._leftovers, busy: true};
+    this._update();
+    try {
+      await this._hass.callWS({type: 'mowbite/action', entity_id: this._config.entity, action: 'mow_leftovers'});
+      this._leftovers = {found: this._leftovers.found, started: true};
+    } catch (err) {
+      this._leftovers = {...this._leftovers, busy: false, error: err?.code === 'planner_failed' ? this._t("The planner didn't take it.") : err?.message || String(err)};
+    }
+    this._update();
+  }
+
+  _leftoversError(err) {
+    return err?.code !== 'timeout' && err?.message ? err.message : this._t('The mower did not answer.');
+  }
+
+  // the last finished mow, for what it left
+  _leftoverJob() {
+    return this._dash?.recent?.latest.find((r) => r.outcome === 'done' && r.areas.length > 0 && r.jobId)?.jobId;
   }
 
   _has(name) {
@@ -1996,10 +2407,25 @@ class MowbiteCard extends HTMLElement {
       .sort((a, b) => rank(a.id) - rank(b.id) || a.label.localeCompare(b.label));
   }
 
+  // two to a row, the wide ones and one left without a partner over the whole row (the app's wholeRow). the first
+  // part of a value stands out, what follows after " · " is plainer
   _facts(el, facts) {
+    const whole = facts.map((f) => !!f.wide);
+    let single = -1;
+    facts.forEach((f, i) => {
+      if (f.wide && single >= 0) whole[single] = true;
+      single = f.wide || single >= 0 ? -1 : i;
+    });
+    if (single >= 0) whole[single] = true;
     const html = facts
-      .map((f) => `<div${f.warn ? ' class="warn"' : ''}><span>${escape(f.label)}</span><strong>${escape(f.value)}</strong></div>`)
+      .map((f, i) => {
+        const [main, ...rest] = String(f.value).split(' · ');
+        const cls = [f.warn ? 'warn' : '', whole[i] ? 'whole' : ''].filter(Boolean).join(' ');
+        const value = `<strong>${escape(main)}${rest.length ? `<small> · ${escape(rest.join(' · '))}</small>` : ''}</strong>`;
+        return `<div${cls ? ` class="${cls}"` : ''}><span>${escape(f.label)}</span>${value}${f.extra ? `<span>${escape(f.extra)}</span>` : ''}</div>`;
+      })
       .join('');
+    el.hidden = !facts.length;
     // only when something changed, so nothing flickers twice a second
     if (el.dataset.html !== html) {
       el.innerHTML = html;
@@ -2007,12 +2433,15 @@ class MowbiteCard extends HTMLElement {
     }
   }
 
-  _button(button, {icon, label, disabled}) {
-    const html = `${ICONS[icon]}${escape(label)}`;
-    if (button.dataset.html !== html) {
-      button.innerHTML = html;
-      button.dataset.html = html;
+  _html(el, html) {
+    if (el.dataset.html !== html) {
+      el.innerHTML = html;
+      el.dataset.html = html;
     }
+  }
+
+  _button(button, {icon, label, disabled}) {
+    this._html(button, `${icon ? ICONS[icon] : ''}${escape(label)}`);
     button.disabled = disabled;
   }
 
@@ -2023,12 +2452,15 @@ class MowbiteCard extends HTMLElement {
     const state = data?.state;
     const message = $('.message');
     const status = $('.status');
+    const dash = this._dash;
+    const app = this._app;
 
     if (this._error || !state) {
       message.hidden = false;
       message.textContent = this._error ?? (data?.connected ? this._t('waiting for the mower…') : this._t('connecting…'));
       status.hidden = true;
       $('.map').hidden = true;
+      $('.today').hidden = true;
       return;
     }
     message.hidden = true;
@@ -2042,7 +2474,12 @@ class MowbiteCard extends HTMLElement {
     const battery = Math.round((state.battery_percentage ?? 0) * 100);
     const chargeState = sensors.om_charge_state;
     const charging = docked && chargeState !== 'Done';
-    const head = this._headline(state, docked, chargeState, data.area);
+    const emergency = !!state.emergency;
+    dash?.setState(current, emergency);
+    // the area being mowed: from the day's events like the app, else what the integration knows
+    const events = dash?.recent?.today ?? [];
+    const area = current === 'MOWING' ? (events.filter((e) => e.type === 'AREA').at(-1)?.area_name ?? data.area) : undefined;
+    const head = this._headline(state, docked, chargeState, area);
 
     status.className = `status ${live ? `tone-${head.tone}` : 'stale'}`;
 
@@ -2055,30 +2492,40 @@ class MowbiteCard extends HTMLElement {
     const appeared = showMap && mapSection.hidden;
     mapSection.hidden = !showMap;
     $('.page').classList.toggle('withMap', showMap && this._config.status !== false);
+    const progress = dash?.progress(state, this._mapData) ?? null;
     if (this._map) {
       if (appeared) this._map.refresh();
       // it follows the mower while it drives, like the app
       if (driving !== this._wasDriving) this._map.setFollow(driving);
       this._wasDriving = driving;
       this._map.setLight(this._config.blur === false);
-      this._map.setPose(data.position ?? state.pose, !!state.emergency);
+      this._map.setPose(data.position ?? state.pose, emergency);
+      this._map.setTodo(progress?.todo ?? null);
     }
 
     // a waiting skip is dropped when there's nothing to skip anymore or the connection went
-    if (this._skipLeft !== null && (!live || current !== 'MOWING' || !this._has('skip_area'))) this._stopSkip();
+    if (this._skip && (!live || current !== 'MOWING' || !this._has(this._skip.name))) this._stopSkip();
 
     const ring = $('.ring');
     ring.className = `ring ring-${batteryColor(battery)}`;
     const c = 2 * Math.PI * 34;
     $('.ringFill').setAttribute('stroke-dasharray', `${(c * battery) / 100} ${c}`);
     $('.percent').textContent = `${battery}%`;
-    $('.charging').textContent = charging ? this._t('charging') : '';
     $('.headline h2').textContent = head.title;
+
+    // why the emergency stop is on, from the mower's log
+    const reason = $('.reason');
+    const why = emergency ? dash?.reasons : null;
+    reason.hidden = !why?.length;
+    if (why?.length && app) {
+      const text = app.events.emergencyText(why);
+      reason.textContent = text.charAt(0).toUpperCase() + text.slice(1);
+    }
 
     const sub = $('.sub');
     if (live) {
       sub.className = 'sub dim';
-      sub.textContent = state.emergency
+      sub.textContent = emergency
         ? this._t('Release the mower, then reset the emergency to drive again.')
         : data.since
           ? this._t('since {time}', {time: this._clock(data.since)})
@@ -2090,28 +2537,43 @@ class MowbiteCard extends HTMLElement {
     }
 
     const acc = state.pose?.pos_accuracy;
-    const gps = gpsQuality(acc);
-    const facts = [
-      {
+    const gps = gpsQuality(acc, data.max_position_accuracy ?? undefined);
+    const num = (id) => (sensors[id] !== undefined && sensors[id] !== '' ? Number(sensors[id]) : undefined);
+    const facts = [];
+    // standing still the mower switches gps off, "off" there says nothing
+    if (driving || gps !== 'none') {
+      facts.push({
         label: 'GPS',
         value: gps === 'none' ? this._t(driving ? 'no fix' : 'off') : `${this._fmt(acc * 100, 1)} cm · ${this._t(GPS_QUALITY_LABEL[gps])}`,
         // only an rtk fix is good while driving
         warn: driving && gps !== 'fix',
-      },
-    ];
-    const num = (id) => (sensors[id] !== undefined && sensors[id] !== '' ? Number(sensors[id]) : undefined);
+      });
+    }
     if (driving) facts.push({label: this._t('Speed'), value: `${this._fmt(this._speed, 2)} m/s`});
+    if (progress?.leftovers) {
+      facts.push({label: this._t('Progress'), value: this._t('leftovers of the last mow'), wide: true});
+    } else if (progress) {
+      const left = progress.secondsLeft !== null ? ` · ${this._t('{time} left', {time: this._duration(progress.secondsLeft)})}` : '';
+      facts.push({label: this._t('Progress'), value: `${Math.round(progress.fraction * 100)} %${left}`, wide: true});
+    }
     if (charging && num('om_charge_current') !== undefined)
       facts.push({label: this._t('Charging'), value: `${this._fmt(num('om_charge_current'), 1)} A`});
     if (num('om_v_battery') !== undefined) facts.push({label: this._t('Battery'), value: `${this._fmt(num('om_v_battery'), 1)} V`});
     if (state.rain_detected) facts.push({label: this._t('Rain'), value: this._t('detected'), warn: true});
+    // the app and the correction data for gps come over it
+    if (dash?.wifi !== undefined && app) {
+      const level = app.coverage.wifiLevel(dash.wifi);
+      facts.push({label: this._t('Wi-Fi'), value: `${dash.wifi} dBm · ${this._t(app.status.WIFI_LEVEL_LABEL[level])}`, warn: level === 'bad'});
+    }
     this._facts($('.facts.info'), facts);
     this._facts($('.facts.temps'), this._temperatures(data.sensor_infos ?? {}, sensors));
 
-    const emergency = !!state.emergency;
     // the mower still offers start while the emergency stop is active, it has to be reset first
     const off = (name) => !live || !this._has(name) || emergency;
     const button = (name) => $(`[data-button="${name}"]`);
+    const reset = button('reset_emergency');
+    reset.hidden = !emergency;
+    this._button(reset, {icon: 'warning', label: this._t('Reset emergency'), disabled: !live});
     this._button(button('start'), {icon: 'play', label: this._t('Start'), disabled: off('start')});
     const paused = current === 'PAUSED' && this._has('continue');
     this._button(
@@ -2121,11 +2583,12 @@ class MowbiteCard extends HTMLElement {
         : {icon: 'pause', label: this._t('Pause'), disabled: off('pause')},
     );
     this._button(button('home'), {icon: 'home', label: this._t('Go home'), disabled: off('home')});
-    this._button(button('skip'), {
-      icon: 'skip',
-      label: this._skipLeft !== null ? this._t('Undo ({n} s)', {n: this._skipLeft}) : this._t('Skip area'),
-      disabled: off('skip_area'),
-    });
+    const undo = (name) => (this._skip?.name === name ? this._t('Undo ({n} s)', {n: this._skip.left}) : null);
+    this._button(button('skip'), {icon: 'skip', label: undo('skip_area') ?? this._t('Skip area'), disabled: off('skip_area')});
+    const skipPath = button('skip_path');
+    skipPath.hidden = !(live && current === 'MOWING' && this._has('skip_path') && !emergency);
+    skipPath.title = this._t('The mower leaves the rest of the outline pass or lanes it is on and goes on with the next ones.');
+    this._button(skipPath, {icon: 'skip', label: undo('skip_path') ?? this._t('Skip this path'), disabled: false});
 
     const canResetJob = live && this._has('reset_job') && !emergency;
     if (!canResetJob) this._confirmReset = false;
@@ -2137,9 +2600,125 @@ class MowbiteCard extends HTMLElement {
     button('reset_job').textContent = this._t('Drop it');
     button('cancel_reset_job').textContent = this._t('Cancel');
 
-    const reset = button('reset_emergency');
-    reset.hidden = !emergency;
-    this._button(reset, {icon: 'warning', label: this._t('Reset emergency'), disabled: !live});
+    this._updateLeftovers($('.leftovers'), live && this._has('start') && !emergency);
+    this._updateToday($('.today'), data);
+  }
+
+  // idle in the dock: what the last mow left, and mowing just that (with the MowBite Planner)
+  _updateLeftovers(el, shown) {
+    const known = !!this._dash?.methods?.has('planner.leftovers');
+    el.hidden = !shown || !known || this._config.leftovers === false;
+    if (el.hidden) return;
+    const live = !!this._data?.available;
+    const state = this._leftovers ?? {};
+    const found = state.found;
+    const map = this._mapData;
+    const name = (id) => map?.areas?.find((a) => a.id === id)?.properties?.name || this._t('unnamed');
+    const m2 = (v) => this._fmt(v, v < 1 ? 2 : 1);
+    const left = found?.areas.filter((a) => a.passes > 0) ?? [];
+    let html = '';
+    if (!found) {
+      html += `<button class="leftoversButton" data-button="check_leftovers"${!live || state.busy ? ' disabled' : ''}>${escape(
+        state.busy ? this._t('Looking at the track…') : this._t('Check the last mow for leftovers'),
+      )}</button>`;
+    } else {
+      const notes = found.areas.filter((a) => a.passes === 0 && a.message);
+      html += `<span>${escape(
+        left.length === 0
+          ? this._t('Nothing worth another pass is left from the last mow.')
+          : this._t('{m2} m² left in {n} passes: {areas}.', {
+              m2: m2(found.m2),
+              n: found.passes,
+              areas: left.map((a) => `${name(a.id)} (${m2(a.m2)} m²)`).join(', '),
+            }),
+      )}${notes.length ? `<small>${escape(notes.map((a) => `${name(a.id)}: ${a.message}`).join(' · '))}</small>` : ''}</span>`;
+      if (left.length > 0 && !state.started)
+        html += `<button class="leftoversButton" data-button="mow_leftovers"${!live || state.busy ? ' disabled' : ''}>${escape(
+          state.busy ? this._t('Starting…') : this._t('Mow just the leftovers'),
+        )}</button>`;
+      if (state.started) html += `<small>${escape(this._t('Started. The mower drives only those passes and skips the areas with nothing left.'))}</small>`;
+      else html += `<button class="leftoversButton" data-button="close_leftovers"${state.busy ? ' disabled' : ''}>${escape(this._t('Close'))}</button>`;
+    }
+    if (state.error) html += `<span class="error">${escape(state.error)}</span>`;
+    this._html(el, html);
+  }
+
+  // today: the left out start, maintenance due, what was mowed, the next start and the last runs (the app's "Today")
+  _updateToday(el, data) {
+    const dash = this._dash;
+    const app = this._app;
+    const recent = dash?.recent;
+    const missed = dash?.missed ?? null;
+    const planned = dash?.planned(data.datum) ?? null;
+    const due = dash?.due ?? [];
+    el.hidden = this._config.today === false || !app || !(recent || planned || missed || due.length > 0);
+    if (el.hidden) return;
+    const $ = (s) => el.querySelector(s);
+    const {dates, events, stats, schedule} = app;
+    $('.todayHead h2').textContent = this._t('Today');
+
+    const missedBox = $('.schedMissed');
+    missedBox.hidden = !missed;
+    if (missed) {
+      const today = dates.dayKey(new Date(missed.t * 1000)) === dates.dayKey(new Date());
+      missedBox.querySelector('strong').textContent = today
+        ? this._t('Scheduled start at {time}', {time: dates.clock(missed.t)})
+        : this._t('Scheduled start yesterday at {time}', {time: dates.clock(missed.t)});
+      missedBox.querySelector('a span').textContent = this._t(schedule.scheduleLogText(missed), {detail: missed.detail ?? ''});
+      missedBox.querySelector('button').title = this._t('Close');
+    }
+    const dueBox = $('.maintenance');
+    dueBox.hidden = !due.length;
+    if (due.length) {
+      dueBox.querySelector('strong').textContent = this._t('Maintenance due');
+      dueBox.querySelector('a span').textContent = due
+        .map((d) => `${this._t(stats.PARTS[d.key].label)}: ${this._t('{used} of {due} h', {used: this._fmt(d.used, d.used < 10 ? 1 : 0), due: d.due})}`)
+        .join(' · ');
+    }
+
+    const numbers = $('.todayNumbers');
+    numbers.hidden = !recent;
+    const runs = recent?.runs ?? [];
+    if (recent) {
+      const mowed = runs.reduce((s, r) => s + r.bladeSeconds, 0);
+      const problems = runs.reduce((s, r) => s + r.problems, 0);
+      $('.mowed').textContent = mowed ? dates.duration(mowed) : '0 min';
+      $('.mowedLabel').textContent = this._t('mowed');
+      $('.runCount').textContent = runs.length;
+      $('.runLabel').textContent = runs.length === 1 ? this._t('run') : this._t('runs');
+      $('.problemsBox').classList.toggle('bad', problems > 0);
+      $('.problemCount').textContent = problems;
+      $('.problemLabel').textContent = problems === 1 ? this._t('problem') : this._t('problems');
+    }
+    const next = $('.nextRun');
+    next.hidden = !planned;
+    if (planned) next.textContent = this._t('Next start: {when}', {when: `${dates.dayLabel(planned)}, ${dates.clock(planned.getTime() / 1000)}`});
+
+    // the one under way is the status above
+    const finished = (recent?.latest ?? []).filter((r) => r.outcome !== 'running');
+    $('.runsLabel').hidden = !finished.length;
+    $('.runsLabel').textContent = finished.length > 1 ? this._t('Last runs') : this._t('Last run');
+    const list = $('.runList');
+    list.hidden = !finished.length;
+    const shown = finished.slice(0, this._moreRuns ? 6 : 3).map((run) => {
+      const outcome = events.OUTCOMES[run.outcome];
+      const day = new Date(run.start * 1000);
+      const today = dates.dayKey(day) === dates.dayKey(new Date());
+      const where =
+        (run.areas.join(', ') || this._t('no area')) +
+        (run.bladeSeconds > 0 ? ` · ${this._t('mowed {time}', {time: dates.duration(run.bladeSeconds)})}` : '');
+      return (
+        `<div class="lastRun run-${outcome.tone}"><div><strong>${escape(`${today ? '' : `${dates.dayLabel(day)}, `}${dates.clock(run.start)} – ${dates.clock(run.end)}`)}</strong>` +
+        `<span class="dim">${escape(where)}</span></div><span class="badge">${escape(this._t(outcome.label))}</span></div>`
+      );
+    });
+    if (finished.length > 3)
+      shown.push(`<button class="moreRuns" data-button="more_runs">${escape(this._moreRuns ? this._t('Show less') : this._t('Show more'))}</button>`);
+    this._html(list, shown.join(''));
+  }
+
+  _duration(seconds) {
+    return this._app ? this._app.dates.duration(seconds) : `${Math.round(seconds / 60)} min`;
   }
 }
 

@@ -24,6 +24,8 @@ TOPIC_SENSORS = "sensors/+/data"
 TOPIC_EVENTS = "events/json"
 TOPIC_POSITION = "position/json"
 TOPIC_MAP = "map/json"
+# OpenMower's parameters, kept by the broker
+TOPIC_PARAMS = "params/json"
 TOPIC_ACTION = "action"
 TOPIC_RPC_REQUEST = "rpc/request"
 # answers and errors both come here, told apart by "error"
@@ -69,7 +71,11 @@ class NoMower(Exception):
 
 
 class RpcError(Exception):
-    """The mower answered an rpc with an error, or doesn't know the method."""
+    """The mower answered an rpc with an error, or doesn't know the method. code: the json-rpc error code."""
+
+    def __init__(self, message: str, code: int | None = None) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class Track:
@@ -220,6 +226,10 @@ class Mower:
         self.position: dict[str, Any] | None = None
         self.map: dict[str, Any] | None = None
         self.map_version = 0
+        # of the parameters only what the card needs: the gps datum (for the sun times) and how accurate a position
+        # mower_logic takes. the rest stays out, ntrip logins are in there
+        self.datum: dict[str, float] | None = None
+        self.max_position_accuracy: float | None = None
         self.track = Track()
         self._rpc: dict[str, asyncio.Future[Any]] = {}
         self._seeding: asyncio.Task[None] | None = None
@@ -337,6 +347,7 @@ class Mower:
                         TOPIC_EVENTS,
                         TOPIC_POSITION,
                         TOPIC_MAP,
+                        TOPIC_PARAMS,
                         TOPIC_RPC_RESPONSE,
                     ):
                         await client.subscribe(self._prefix + topic)
@@ -432,6 +443,17 @@ class Mower:
                 self.map = data
                 self.map_version += 1
                 self._changed()
+        elif topic == TOPIC_PARAMS:
+            data = _json(payload)
+            if not isinstance(data, dict):
+                return
+            numbers = {k: v for k, v in data.items() if isinstance(v, (int, float)) and not isinstance(v, bool)}
+            # v2 keeps the datum under /ll/services/gps/, v1 under the gps driver (the app matches the key's end)
+            lat = next((v for k, v in numbers.items() if k.endswith("/datum_lat")), None)
+            lon = next((v for k, v in numbers.items() if k.endswith(("/datum_long", "/datum_lon"))), None)
+            self.datum = {"lat": lat, "lon": lon} if lat is not None and lon is not None and (lat or lon) else None
+            self.max_position_accuracy = numbers.get("/mower_logic/max_position_accuracy")
+            self._changed()
         elif topic == TOPIC_RPC_RESPONSE:
             data = _json(payload)
             if not isinstance(data, dict):
@@ -440,7 +462,10 @@ class Mower:
             if future is None or future.done():
                 return
             if data.get("error") is not None:
-                future.set_exception(RpcError(str(data["error"])))
+                error = data["error"]
+                code = error.get("code") if isinstance(error, dict) else None
+                message = error.get("message") if isinstance(error, dict) else None
+                future.set_exception(RpcError(str(message or error), code if isinstance(code, int) else None))
             else:
                 future.set_result(data.get("result"))
         elif topic.startswith("sensors/") and topic.endswith("/data"):

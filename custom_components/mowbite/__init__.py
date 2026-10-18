@@ -46,6 +46,8 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 # the card comes with the integration, every dashboard can use it without adding it as a resource
 CARD_URL = "/mowbite"
 CARD_FILE = Path(__file__).parent / "frontend" / "mowbite-card.js"
+# the app's pictures and its dashboard logic next to it, loaded by the card with the same version
+ART_FILES = [CARD_FILE.parent / "mowbite-art.js", CARD_FILE.parent / "mowbite-app.js"]
 CARD_PATH = f"{CARD_URL}/{CARD_FILE.name}"
 
 
@@ -71,7 +73,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     websocket.async_setup(hass)
     await hass.http.async_register_static_paths([StaticPathConfig(CARD_URL, str(CARD_FILE.parent), False)])
     # a new version of the card has a new url, so browsers don't keep the old one
-    version = await hass.async_add_executor_job(lambda: hashlib.sha1(CARD_FILE.read_bytes()).hexdigest()[:8])
+    version = await hass.async_add_executor_job(
+        lambda: hashlib.sha1(b"".join(f.read_bytes() for f in [CARD_FILE, *ART_FILES])).hexdigest()[:8]
+    )
     url = f"{CARD_PATH}?v={version}"
     add_extra_js_url(hass, url)
     await _async_card_resource(hass, url)
