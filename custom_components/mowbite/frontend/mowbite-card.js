@@ -230,6 +230,8 @@ function artOps(art) {
       return {key: icon.key, real: icon.real, svg: icon.draw()};
     },
     body: (sizes, keepRectangle) => art.sizesBody(sizes, keepRectangle) ?? null,
+    // the garden's life (ART_API 2): its layers as svg text in MowBite's order, null with none of it on
+    life: (input) => (art.gardenLife ? art.gardenLife(input) : null),
     // the garden style's textures, fills and things in the app's own units (its 400 wide square, fit: where the map
     // lies in it), and the real edges in metres
     areas({areas, looks, body, garden, uid, fit}) {
@@ -373,6 +375,7 @@ function cleanArt(op, result) {
     for (const [id, fill] of Object.entries(out.fills ?? {})) if (!/^[\w-]+$/.test(fill)) delete out.fills[id];
     for (const [key, d] of Object.entries(out.edges ?? {})) if (!/^[MLZ0-9.\s-]*$/.test(d)) out.edges[key] = '';
   }
+  if (op === 'life') for (const key of ['defs', 'lawn', 'things', 'stones', 'sky']) out[key] = cleanSvg(out[key]);
   return out;
 }
 
@@ -407,9 +410,9 @@ function cleanSvg(text) {
   return [...root.childNodes].map((n) => new XMLSerializer().serializeToString(n)).join('').replace(/ xmlns="[^"]*"/g, '');
 }
 
-// per mower: the pictures it draws with, the mower's own once its MowBite serves pictures this card knows (ART_API 1),
-// else the ones that came with the integration
-const ART_API = 1;
+// per mower: the pictures it draws with, the mower's own once its MowBite serves pictures this card knows (ART_API 1,
+// 2 with the garden's life), else the ones that came with the integration
+const ART_APIS = [1, 2];
 const mowerArt = new Map();
 function artFor(card) {
   const entity = card._config.entity;
@@ -419,10 +422,10 @@ function artFor(card) {
     card._hass
       .callWS({type: 'mowbite/art', entity_id: entity})
       .then(async (answer) => {
-        if (!answer?.code || answer.api !== ART_API) return;
+        if (!answer?.code || !ART_APIS.includes(answer.api)) return;
         const own = new SandboxArt(answer.code);
         const api = await own.api.catch(() => null);
-        if (api !== ART_API) {
+        if (!ART_APIS.includes(api)) {
           own.destroy();
           return;
         }
@@ -925,7 +928,7 @@ class MowbiteMap {
   constructor(section) {
     this.section = section;
     section.innerHTML = `
-      <svg xmlns="${svgNS}" preserveAspectRatio="xMidYMid meet">
+      <svg class="svg" xmlns="${svgNS}" preserveAspectRatio="xMidYMid meet">
         <g class="areas"></g>
         <g class="docks"></g>
         <g class="edges"></g>
@@ -1067,6 +1070,20 @@ class MowbiteMap {
     this.speed = speed;
   }
 
+  // what the garden's life goes by besides the map (the app's LifeInput): settings.garden, the place on earth, the
+  // weather, rain, the last jobs. drawn again when one of them changes, the time every 5 minutes like the app, the
+  // mower's light at night and the live cuts while it drives every 10 s (30 s on a light card)
+  setLife(life) {
+    const now = Date.now();
+    const key = JSON.stringify([life.garden, life.datum, life.weather, life.rain, life.jobsAt, Math.floor(now / 300000)]);
+    const moving = this.lifeParts && (this.lifeParts.growth || this.lifeDark) && life.driving;
+    this.life = life;
+    if (key !== this.lifeKey || (moving && now - (this.lifeAt ?? 0) > (this.light ? 30000 : 10000))) {
+      this.lifeKey = key;
+      this.drawAreas();
+    }
+  }
+
   // the app's pictures (BundledArt or the mower's own SandboxArt), everything drawn with them again
   setArt(art) {
     if (art === this.art) return;
@@ -1107,6 +1124,9 @@ class MowbiteMap {
     const draw = (art) => {
       const fills = art?.fills ?? {};
       const things = art?.things ?? {};
+      // with the garden's life: its long grass on the active lawns, its things (with their shadows) instead of the
+      // areas' own, its stones instead of the real edges' line
+      const life = art?.life;
       const drawn = areas.map((area) => {
         const p = area.properties ?? {};
         const cls = [
@@ -1116,9 +1136,11 @@ class MowbiteMap {
         ]
           .filter(Boolean)
           .join(' ');
-        const fill = garden && fills[area.id] ? ` style="fill:url(#${uid}${fills[area.id]});fill-opacity:1"` : '';
+        const long = life?.long && p.type === 'mow' && p.active !== false && p.mowable !== false;
+        const name = long ? 'long' : fills[area.id];
+        const fill = garden && name ? ` style="fill:url(#${uid}${name});fill-opacity:1"` : '';
         let out = `<polygon class="${cls}" points="${(area.outline ?? []).map(app).join(' ')}"${fill}/>`;
-        const thing = garden ? things[area.id] : null;
+        const thing = garden && !life ? things[area.id] : null;
         if (thing) out += `<g class="gardenThing${p.active === false ? ' gardenOff' : ''}" clip-path="url(#${uid}clip${thing.i})">${thing.svg}</g>`;
         return out;
       });
@@ -1129,18 +1151,59 @@ class MowbiteMap {
       this.section.classList.toggle('gardenMap', isGarden);
       this.areas.innerHTML =
         (edges?.outside ? `<path class="realGrass" d="${edges.outside}"/>` : '') +
-        `<g transform="${toMap}">${garden ? (art?.defs ?? '') : ''}${drawn.join('')}</g>` +
-        (edges?.obstacles ? `<path class="realGrass" d="${edges.obstacles}"/>` : '');
-      this.edges.innerHTML = edges?.line ? `<path class="realEdge" d="${edges.line}"/>` : '';
+        `<g transform="${toMap}">${garden ? (art?.defs ?? '') + (life?.defs ?? '') : ''}${drawn.join('')}${life?.lawn ?? ''}</g>` +
+        (edges?.obstacles ? `<path class="realGrass" d="${edges.obstacles}"/>` : '') +
+        (life ? `<g transform="${toMap}">${life.things}${life.stones}${life.sky}</g>` : '');
+      this.edges.innerHTML = edges?.line && !life?.stones ? `<path class="realEdge" d="${edges.line}"/>` : '';
+      const growth = !!life?.parts?.growth;
+      if (growth !== !!this.lifeGrowth) {
+        this.lifeGrowth = growth;
+        this.drawSwath();
+      }
     };
     // the plain areas right away, the garden and the real edges once the pictures worked them out
     const turn = ++this.areasDrawn;
     if (!this.areas.firstChild) draw(null);
     if (!this.art || (!garden && !this.body)) return draw(null);
-    this.art
-      .call('areas', {areas: map.areas ?? [], looks: this.look.looks, body: this.body, garden, uid, fit: {minX, minY, m, padX, padY}})
-      .then((art) => turn === this.areasDrawn && !this.destroyed && draw(art))
+    const fit = {minX, minY, m, padX, padY};
+    const life = this.lifeInput(garden, fit);
+    this.lifeAt = Date.now();
+    Promise.all([
+      this.art.call('areas', {areas: map.areas ?? [], looks: this.look.looks, body: this.body, garden, uid, fit}),
+      life ? this.art.call('life', life).catch(() => null) : null,
+    ])
+      .then(([art, lifeArt]) => {
+        if (turn !== this.areasDrawn || this.destroyed) return;
+        this.lifeParts = lifeArt?.parts ?? null;
+        this.lifeDark = !!lifeArt?.sky;
+        draw({...art, life: lifeArt});
+      })
       .catch(() => turn === this.areasDrawn && draw(null));
+  }
+
+  // the garden's life's input, null when none of it is on (or the pictures don't know it, they answer null then)
+  lifeInput(garden, fit) {
+    const life = this.life;
+    const parts = life?.garden;
+    if (!garden || !parts || !Object.values(parts).some((on) => on === true)) return null;
+    // the live track in pieces of {x, y, b} like the app's, only for the cuts
+    const track = [];
+    if (parts.growth) for (let i = 0; i < this.points.length; i += 400) track.push(this.points.slice(i, i + 401));
+    return {
+      areas: this.map.areas ?? [],
+      garden: parts,
+      looks: this.look.looks,
+      body: this.body,
+      fit,
+      uid: this.uid,
+      now: Date.now(),
+      datum: life.datum ?? undefined,
+      weather: life.weather ?? undefined,
+      rain: !!life.rain,
+      mower: this.pose ? {x: this.pose.x, y: this.pose.y} : undefined,
+      jobs: parts.growth ? (life.jobs ?? []) : [],
+      track,
+    };
   }
 
   setIcons(icons) {
@@ -1231,7 +1294,8 @@ class MowbiteMap {
   // blade's round ends are drawn again
   growSwath(start) {
     const body = this.body;
-    if (!body?.blade) return;
+    // the garden's growth draws the cut lawn itself, the app leaves the blade's strip out then
+    if (!body?.blade || this.lifeGrowth) return;
     for (let i = start; i < this.points.length; i++) {
       const p = this.points[i];
       if (!p.b) {
@@ -1648,6 +1712,54 @@ class Dashboard {
 
   changed() {
     if (!this.stopped) this.card._update();
+  }
+
+  // what the garden's life goes by (settings.garden on in the garden style): the last 5 jobs for the lawn's growth,
+  // asked again after each job and every half hour, the weather for the season every 20 minutes (only with the
+  // weather on in the app, like there)
+  life(settings, datum, driving) {
+    const garden = settings?.mapStyle === 'garden' ? settings.garden : null;
+    if (!garden) return {garden: null};
+    const now = Date.now();
+    if (garden.growth && !this.jobsAsking && (!this.jobsAt || now - this.jobsAt > 30 * 60000 || (this.wasDriving && !driving))) {
+      void this.loadJobs();
+    }
+    this.wasDriving = driving;
+    if (settings.weather && garden.season && datum && !this.weatherAsking && (!this.weatherAt || now - this.weatherAt > 20 * 60000)) {
+      this.weatherAsking = true;
+      this.app.weather
+        .loadWeather(datum.lat, datum.lon)
+        .then((w) => {
+          this.weather = w;
+          this.changed();
+        })
+        .catch(() => {})
+        .finally(() => {
+          this.weatherAsking = false;
+          this.weatherAt = Date.now();
+        });
+    }
+    return {garden, datum, weather: settings.weather ? this.weather : undefined, jobs: this.jobs ?? [], jobsAt: this.jobsAt};
+  }
+
+  // the last five jobs' tracks like the app's (position.history.list, newest first, a resumed job only once)
+  async loadJobs() {
+    this.jobsAsking = true;
+    try {
+      const list = (await this.card._rpc('position.history.list', [])) ?? [];
+      const jobs = [];
+      for (const job of list.filter((j, i) => list.findIndex((k) => k.job_id === j.job_id) === i).slice(0, 5)) {
+        const history = await this.card._rpc('position.history', {job_id: job.job_id}, 20000).catch(() => null);
+        jobs.push({job_id: job.job_id, timestamp: job.timestamp, segments: history?.segments ?? []});
+      }
+      this.jobs = jobs;
+    } catch {
+      // an OpenMower without the position history: no growth from it
+      this.jobs = [];
+    }
+    this.jobsAsking = false;
+    this.jobsAt = Date.now();
+    this.changed();
   }
 
   // the rpcs the mower has: the leftovers only with the MowBite Planner
@@ -2365,8 +2477,12 @@ class MowbiteCard extends HTMLElement {
     return this._data?.actions?.[ACTION_IDS[name]] === true;
   }
 
-  _headline(state, docked, chargeState, area) {
+  // charger: on the charging contacts whatever the state (mower_logic's is_charging, or the voltage on them)
+  _headline(state, docked, charger, chargeState, area) {
     if (state.emergency) return {title: this._t('Emergency stop'), tone: 'error'};
+    // left on in the dock it says so, it's why the map shows
+    if (state.current_state === 'AREA_RECORDING')
+      return {title: charger ? this._t('Recording mode, in the dock') : this._t('Recording an area'), tone: 'live'};
     if (docked)
       return chargeState === 'Done'
         ? {title: this._t('Charged, in the dock'), tone: 'good'}
@@ -2380,8 +2496,6 @@ class MowbiteCard extends HTMLElement {
         return {title: this._t('Leaving the dock'), tone: 'live'};
       case 'PAUSED':
         return {title: this._t('Paused'), tone: 'warn'};
-      case 'AREA_RECORDING':
-        return {title: this._t('Recording an area'), tone: 'live'};
       case 'IDLE':
         return {title: this._t('Waiting on the lawn'), tone: 'warn'};
       default:
@@ -2470,7 +2584,8 @@ class MowbiteCard extends HTMLElement {
     const live = !!data.available;
     const current = state.current_state ?? '';
     const driving = DRIVING.has(current);
-    const docked = current === 'IDLE' && (!!state.is_charging || Number(sensors.om_v_charge) > 20);
+    const charger = !!state.is_charging || Number(sensors.om_v_charge) > 20;
+    const docked = current === 'IDLE' && charger;
     const battery = Math.round((state.battery_percentage ?? 0) * 100);
     const chargeState = sensors.om_charge_state;
     const charging = docked && chargeState !== 'Done';
@@ -2479,7 +2594,7 @@ class MowbiteCard extends HTMLElement {
     // the area being mowed: from the day's events like the app, else what the integration knows
     const events = dash?.recent?.today ?? [];
     const area = current === 'MOWING' ? (events.filter((e) => e.type === 'AREA').at(-1)?.area_name ?? data.area) : undefined;
-    const head = this._headline(state, docked, chargeState, area);
+    const head = this._headline(state, docked, charger, chargeState, area);
 
     status.className = `status ${live ? `tone-${head.tone}` : 'stale'}`;
 
@@ -2501,6 +2616,7 @@ class MowbiteCard extends HTMLElement {
       this._map.setLight(this._config.blur === false);
       this._map.setPose(data.position ?? state.pose, emergency);
       this._map.setTodo(progress?.todo ?? null);
+      if (dash) this._map.setLife({...dash.life(this._settings, data.datum, driving), rain: !!state.rain_detected, driving});
     }
 
     // a waiting skip is dropped when there's nothing to skip anymore or the connection went

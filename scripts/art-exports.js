@@ -1,12 +1,14 @@
 // what the card uses, the app's pictures as SVG strings
 
-// which version of this interface the file has, counted up when a signature changes
-export const ART_API = 1;
+// which version of this interface the file has, counted up when a signature changes (2: the garden's life)
+export const ART_API = 2;
 const mapIcons = require('@/components/mapIcons');
 const gardenLook = require('@/components/gardenLook');
 const gardenPictures = require('@/components/gardenPictures');
 const mowStripes = require('@/lib/mowStripes');
 const mowerBody = require('@/lib/mowerBody');
+const life = require('@/components/gardenLife');
+const sun = require('@/lib/sun');
 
 // the mower's icon by its key (the app's first one for an unknown key): fit is a real mower's width over its length,
 // side a side view, upright a figure. draw takes {speed, emergency, blades}
@@ -47,3 +49,36 @@ export const sizesBody = (sizes, keepRectangle) => mowerBody.sizesBody(mowerBody
 export const bodyShape = mowerBody.bodyShape;
 export const realEdges = mowerBody.realEdges;
 export const insideEdge = mowerBody.insideEdge;
+
+// the garden's life (2): light and shadows after the sun, the season and the weather on the lawn, the lawn growing back
+// and cut where the mower goes, a mowing edge of stones. each part on its own (lifeOf: settings.garden), the sun's
+// position and the season from the map's place on earth
+export const lifeOf = life.lifeOf;
+export const heightOf = life.heightOf;
+export const shadowOf = life.shadowOf;
+export const lightOf = life.lightOf;
+export const sprinkles = life.sprinkles;
+export const drawSprinkle = (s, m, season) => render(life.drawSprinkle(s, m, season, 0));
+export const cutPaths = life.cutPaths;
+export const freshness = life.freshness;
+export const lifeDefs = (uid, m) => render(life.LifeDefs({uid, m}));
+export const sunPosition = sun.sunPosition;
+export const seasonOf = sun.seasonOf;
+
+// all of it at once in MapView's layers as svg text, null with none of it on. input: {areas, garden, looks, body, fit,
+// uid, now, datum, weather, rain, mower, jobs, track, edgeLine, hidden}, see LifeInput in src/components/gardenLife.tsx.
+// defs into the svg's defs, then over the areas in this order: lawn, the real lawn in the obstacles, things (instead of
+// the areas' own), stones (instead of the real edges' line), sky. long: the active lawns are filled with url(#{uid}long)
+export function gardenLife(input) {
+  const scene = life.lifeScene(input);
+  if (!scene) return null;
+  return {
+    parts: scene.parts,
+    long: scene.long,
+    defs: render(scene.defs),
+    lawn: render(scene.lawn),
+    things: render(scene.things),
+    stones: render(scene.stones),
+    sky: render(scene.sky),
+  };
+}

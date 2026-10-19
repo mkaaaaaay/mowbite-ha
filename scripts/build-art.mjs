@@ -37,7 +37,8 @@ const COMMON_STUBS = {
   '@/lib/native': 'module.exports = {isApp: () => false};',
   '@/lib/settings':
     'module.exports = {saveSettings() {}, syncSettings() {}, settingsStore: {get: () => ({}), snapshot: () => ({}), subscribe: () => () => {}}};',
-  css: 'module.exports = new Proxy({}, {get: (_, k) => String(k)});',
+  // a css module's class names as they are (class="cutThere"), also as its default export, which is how TSX imports it
+  css: "module.exports = new Proxy({}, {get: (_, k) => (k === 'default' ? module.exports : k === '__esModule' ? true : String(k))});",
 };
 
 const BUNDLES = [
@@ -49,9 +50,11 @@ const BUNDLES = [
       '@/components/openmowerArt': 'src/components/openmowerArt.ts',
       '@/components/gardenPictures': 'src/components/gardenPictures.tsx',
       '@/components/gardenLook': 'src/components/gardenLook.tsx',
+      '@/components/gardenLife': 'src/components/gardenLife.tsx',
       '@/lib/geometry': 'src/lib/geometry.ts',
       '@/lib/mowStripes': 'src/lib/mowStripes.ts',
       '@/lib/mowerBody': 'src/lib/mowerBody.ts',
+      '@/lib/sun': 'src/lib/sun.ts',
       // the real edges' polygon clipping (Boost Software License)
       'clipper-lib': CLIPPER,
     },
@@ -87,6 +90,7 @@ const BUNDLES = [
       '@/lib/mowerBody': 'src/lib/mowerBody.ts',
       '@/lib/coverage': 'src/lib/coverage.ts',
       '@/lib/stats': 'src/lib/stats.ts',
+      '@/hooks/useWeather': 'src/hooks/useWeather.ts',
       'clipper-lib': CLIPPER,
     },
     stubs: {
@@ -96,7 +100,7 @@ const BUNDLES = [
       '@/lib/mowers': 'module.exports = transportMowers;',
       '@/lib/mqttClient': 'module.exports = {};',
     },
-    css: {from: ['src/app/globals.css', 'src/app/page.module.css'], make: dashboardCss},
+    css: {from: ['src/app/globals.css', 'src/app/page.module.css', 'src/components/MapView.module.css'], make: dashboardCss},
   },
 ];
 
@@ -138,7 +142,11 @@ function dashboardCss() {
   const page = cssRules(fs.readFileSync(path.join(app, 'src/app/page.module.css'), 'utf8')).filter(
     ([selector]) => !/^(\.page|\.main|\.brand|\.top)\b/.test(selector) && !/^@media \(min-width/.test(selector),
   );
-  const all = [...theme, ...page.map(([, rule]) => rule)].join('\n\n');
+  // the garden's life on the map (MapView.module.css): its layers, cuts, stones and shadows
+  const map = cssRules(fs.readFileSync(path.join(app, 'src/components/MapView.module.css'), 'utf8')).filter(([selector]) =>
+    /gardenLife|gardenLight|\.stones|\.cuts|cutThere|cutBack|stoneTop|thingShadow/.test(selector),
+  );
+  const all = [...theme, ...page.map(([, rule]) => rule), ...map.map(([, rule]) => rule)].join('\n\n');
   return `export const DASHBOARD_CSS = ${JSON.stringify(all)};`;
 }
 

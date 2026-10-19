@@ -36,3 +36,4 @@ export const planProgress = require('@/lib/planProgress');
 export const coverage = require('@/lib/coverage');
 export const stats = require('@/lib/stats');
 export const openmower = require('@/lib/openmower');
+export const weather = require('@/hooks/useWeather');

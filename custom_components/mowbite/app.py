@@ -22,8 +22,9 @@ _LOGGER = logging.getLogger(__name__)
 SETTINGS_PATH = "/cgi-bin/settings"
 # a change in the app shows on the card a minute later at the latest
 REFRESH = timedelta(minutes=1)
-# what the card uses of them: the map's colors, icons, style and pictures per area, the mower's sizes
-KEYS = ("colors", "icons", "dashboard", "mower", "mapStyle", "looks", "keepRectangle")
+# what the card uses of them: the map's colors, icons, style, pictures per area and garden life, the mower's sizes,
+# whether the weather may be asked
+KEYS = ("colors", "icons", "dashboard", "mower", "mapStyle", "looks", "keepRectangle", "garden", "weather")
 
 
 class CannotReachApp(Exception):

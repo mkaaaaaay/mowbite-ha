@@ -63,7 +63,7 @@ def test_the_app_files_come_along() -> None:
     frontend = Path(__file__).parent.parent / "custom_components" / "mowbite" / "frontend"
     art = (frontend / "mowbite-art.js").read_text()
     app = (frontend / "mowbite-app.js").read_text()
-    assert "export const ART_API = 1;" in art
+    assert "export const ART_API = 2;" in art and "export function gardenLife" in art
     assert "export const APP_API = 1;" in app and "export const DASHBOARD_CSS" in app
     # drawing only, nothing loaded from elsewhere
     assert "fetch(" not in art.split("// what the card uses")[0].split("const transportMowers")[0]

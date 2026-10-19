@@ -178,6 +178,8 @@ async def test_app_settings(
         "colors": SETTINGS["colors"],
         "dashboard": SETTINGS["dashboard"],
         "mower": SETTINGS["mower"],
+        # whether the card may ask the weather for the garden's season, like the app
+        "weather": True,
     }
 
 
