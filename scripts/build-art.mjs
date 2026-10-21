@@ -144,7 +144,7 @@ function dashboardCss() {
   );
   // the garden's life on the map (MapView.module.css): its layers, cuts, stones and shadows
   const map = cssRules(fs.readFileSync(path.join(app, 'src/components/MapView.module.css'), 'utf8')).filter(([selector]) =>
-    /gardenLife|gardenLight|\.stones|\.cuts|cutThere|cutBack|stoneTop|thingShadow/.test(selector),
+    /gardenLife|gardenLight|\.stones|\.cuts|cutThere|cutBack|stoneTop|thingShadow|mowerUnder/.test(selector),
   );
   const all = [...theme, ...page.map(([, rule]) => rule), ...map.map(([, rule]) => rule)].join('\n\n');
   return `export const DASHBOARD_CSS = ${JSON.stringify(all)};`;

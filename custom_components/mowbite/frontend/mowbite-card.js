@@ -234,11 +234,26 @@ function artOps(art) {
     life: (input) => (art.gardenLife ? art.gardenLife(input) : null),
     // the garden style's textures, fills and things in the app's own units (its 400 wide square, fit: where the map
     // lies in it), and the real edges in metres
-    areas({areas, looks, body, garden, uid, fit}) {
+    areas({areas, looks, lookVariants, lookSizes, lookTurns, lookClosed, body, garden, uid, fit}) {
+      // ART_API 3: the whole garden as MapView draws it, placed, clipped and turned by the app itself, its edges in
+      // the 400 square
+      if (art.gardenAreas) {
+        const g = art.gardenAreas({areas, looks, lookVariants, lookSizes, lookTurns, lookClosed, body, uid, fit});
+        const e = g.edges;
+        return {
+          grid: true,
+          defs: garden ? g.defs : '',
+          fills: garden ? g.fills : {},
+          things: garden ? g.things : {},
+          over: garden ? g.over : {},
+          covers: garden ? (g.covers ?? []) : [],
+          edges: e ? {line: e.line, outside: e.grassOutside, obstacles: e.grassObstacles} : null,
+        };
+      }
       const {minX, minY, m, padX, padY} = fit;
       const app = (p) => ({x: (p.x - minX) * m + padX, y: 400 - ((p.y - minY) * m + padY)});
       const ring = (o) => o.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(3)} ${(-p.y).toFixed(3)}`).join('') + 'Z';
-      const out = {defs: '', fills: {}, things: {}, edges: null};
+      const out = {defs: '', fills: {}, things: {}, over: {}, covers: [], edges: null};
       if (garden) {
         const angles = [];
         const clips = [];
@@ -254,10 +269,9 @@ function artOps(art) {
             // a thing inside the area's real edge, cut to it should it still stick out
             const inside = ((body && art.insideEdge(a.outline, body)) || a.outline).map(app);
             const {cx, cy, deg, w, h} = art.placeThing(look, inside);
-            out.things[a.id] = {
-              i: clips.length,
-              svg: `<g transform="translate(${cx} ${cy}) rotate(${deg})">${art.drawThing(look, {x: -w / 2, y: -h / 2, w, h}) ?? ''}</g>`,
-            };
+            out.things[a.id] =
+              `<g class="gardenThing${a.properties.active === false ? ' gardenOff' : ''}" clip-path="url(#${uid}clip${clips.length})">` +
+              `<g transform="translate(${cx} ${cy}) rotate(${deg})">${art.drawThing(look, {x: -w / 2, y: -h / 2, w, h}) ?? ''}</g></g>`;
             clips.push(inside.map((p) => `${p.x},${p.y}`).join(' '));
           }
         }
@@ -371,11 +385,15 @@ function cleanArt(op, result) {
   if (op === 'mower' || op === 'dock') out.svg = cleanSvg(out.svg);
   if (op === 'areas') {
     out.defs = cleanSvg(out.defs);
-    for (const thing of Object.values(out.things ?? {})) thing.svg = cleanSvg(thing.svg);
+    for (const key of ['things', 'over']) for (const [id, svg] of Object.entries(out[key] ?? {})) out[key][id] = cleanSvg(svg);
     for (const [id, fill] of Object.entries(out.fills ?? {})) if (!/^[\w-]+$/.test(fill)) delete out.fills[id];
-    for (const [key, d] of Object.entries(out.edges ?? {})) if (!/^[MLZ0-9.\s-]*$/.test(d)) out.edges[key] = '';
+    for (const [key, d] of Object.entries(out.edges ?? {})) if (typeof d !== 'string' || !/^[MLHVZAC0-9.,eE\s-]*$/i.test(d)) out.edges[key] = '';
+    out.covers = (out.covers ?? []).filter((c) => ['cx', 'cy', 'r'].every((k) => Number.isFinite(c?.[k])));
   }
-  if (op === 'life') for (const key of ['defs', 'lawn', 'things', 'stones', 'sky']) out[key] = cleanSvg(out[key]);
+  if (op === 'life') {
+    for (const key of ['defs', 'lawn', 'things', 'stones', 'sky', 'canopies']) out[key] = cleanSvg(out[key]);
+    out.covers = (out.covers ?? []).filter((c) => ['cx', 'cy', 'r'].every((k) => Number.isFinite(c?.[k])));
+  }
   return out;
 }
 
@@ -412,7 +430,7 @@ function cleanSvg(text) {
 
 // per mower: the pictures it draws with, the mower's own once its MowBite serves pictures this card knows (ART_API 1,
 // 2 with the garden's life), else the ones that came with the integration
-const ART_APIS = [1, 2];
+const ART_APIS = [1, 2, 3];
 const mowerArt = new Map();
 function artFor(card) {
   const entity = card._config.entity;
@@ -554,8 +572,18 @@ const MAP_STYLE = `
 
   .dock,
   .mower,
-  .gardenThing {
+  .gardenThing,
+  .overLayer,
+  .mowerUnder {
     pointer-events: none;
+  }
+
+  /* the mower's outline where a crown or a parasol hides it (the app's MapView) */
+  .mowerUnderBody {
+    fill: none;
+    stroke: #fff;
+    stroke-opacity: 0.9;
+    stroke-width: 1.5;
   }
 
   .turn {
@@ -940,6 +968,8 @@ class MowbiteMap {
         <g class="mowerBodyLayer"></g>
         <g class="mowerIcon"></g>
         <g class="mowerTop"></g>
+        <g class="overLayer"></g>
+        <g class="underLayer"></g>
       </svg>
       <div class="zoomButtons">
         <button data-zoom="in" title="+">${MAP_BUTTONS.plus}</button>
@@ -961,6 +991,10 @@ class MowbiteMap {
     this.bodyLayer = section.querySelector('.mowerBodyLayer');
     this.mower = section.querySelector('.mowerIcon');
     this.top = section.querySelector('.mowerTop');
+    // the garden's crowns and parasols over the mower, and its outline where they hide it (the app's covers)
+    this.overLayer = section.querySelector('.overLayer');
+    this.underLayer = section.querySelector('.underLayer');
+    this.covers = [];
     this.body = null;
     this.points = [];
     // the stretch with the blades on the strip is still growing along: its scan and its growing piece and ends
@@ -1060,7 +1094,15 @@ class MowbiteMap {
 
   // the app's map style and the pictures picked for the areas (its settings), drawn again when they change
   setLook(settings) {
-    const look = {style: settings?.mapStyle ?? null, looks: settings?.looks ?? {}};
+    const look = {
+      style: settings?.mapStyle ?? null,
+      looks: settings?.looks ?? {},
+      // how each picture is drawn, as picked under the map (ART_API 3)
+      lookVariants: settings?.lookVariants ?? {},
+      lookSizes: settings?.lookSizes ?? {},
+      lookTurns: settings?.lookTurns ?? {},
+      lookClosed: settings?.lookClosed ?? {},
+    };
     if (JSON.stringify(look) === JSON.stringify(this.look)) return;
     this.look = look;
     this.drawAreas();
@@ -1140,8 +1182,7 @@ class MowbiteMap {
         const name = long ? 'long' : fills[area.id];
         const fill = garden && name ? ` style="fill:url(#${uid}${name});fill-opacity:1"` : '';
         let out = `<polygon class="${cls}" points="${(area.outline ?? []).map(app).join(' ')}"${fill}/>`;
-        const thing = garden && !life ? things[area.id] : null;
-        if (thing) out += `<g class="gardenThing${p.active === false ? ' gardenOff' : ''}" clip-path="url(#${uid}clip${thing.i})">${thing.svg}</g>`;
+        if (garden && !life && things[area.id]) out += things[area.id];
         return out;
       });
       const edges = art?.edges;
@@ -1149,12 +1190,25 @@ class MowbiteMap {
       this.svg.classList.toggle('garden', isGarden);
       // the page shows a little through the garden's paving, like in the app
       this.section.classList.toggle('gardenMap', isGarden);
+      // the real edges in metres (the card's own loop) or in the 400 square (the app's garden)
+      const inGrid = (svg) => (art?.grid ? `<g transform="${toMap}">${svg}</g>` : svg);
       this.areas.innerHTML =
-        (edges?.outside ? `<path class="realGrass" d="${edges.outside}"/>` : '') +
+        (edges?.outside ? inGrid(`<path class="realGrass" d="${edges.outside}"/>`) : '') +
         `<g transform="${toMap}">${garden ? (art?.defs ?? '') + (life?.defs ?? '') : ''}${drawn.join('')}${life?.lawn ?? ''}</g>` +
-        (edges?.obstacles ? `<path class="realGrass" d="${edges.obstacles}"/>` : '') +
+        (edges?.obstacles ? inGrid(`<path class="realGrass" d="${edges.obstacles}"/>`) : '') +
         (life ? `<g transform="${toMap}">${life.things}${life.stones}${life.sky}</g>` : '');
-      this.edges.innerHTML = edges?.line && !life?.stones ? `<path class="realEdge" d="${edges.line}"/>` : '';
+      this.edges.innerHTML = edges?.line && !life?.stones ? inGrid(`<path class="realEdge" d="${edges.line}"/>`) : '';
+      // crowns and parasols over the mower (the life's canopies with it on), and where they hide it in metres
+      const over = life ? (life.canopies ?? '') : garden ? Object.values(art?.over ?? {}).join('') : '';
+      this.overLayer.innerHTML = over ? `<g transform="${toMap}">${over}</g>` : '';
+      const covers = garden ? ((life ? life.covers : art?.covers) ?? []) : [];
+      this.covers = covers.map((c) => ({x: minX + (c.cx - padX) / m, y: -(minY + (400 - c.cy - padY) / m), r: c.r / m}));
+      this.underLayer.innerHTML = this.covers.length
+        ? `<defs><mask id="${uid}under" maskUnits="userSpaceOnUse" x="-10000" y="-10000" width="20000" height="20000">` +
+          this.covers.map((c) => `<circle cx="${c.x}" cy="${c.y}" r="${c.r}" fill="#fff"/>`).join('') +
+          `</mask></defs><g mask="url(#${uid}under)" class="mowerUnder"><polygon class="mowerUnderBody"/></g>`
+        : '';
+      this.drawMower();
       const growth = !!life?.parts?.growth;
       if (growth !== !!this.lifeGrowth) {
         this.lifeGrowth = growth;
@@ -1169,7 +1223,7 @@ class MowbiteMap {
     const life = this.lifeInput(garden, fit);
     this.lifeAt = Date.now();
     Promise.all([
-      this.art.call('areas', {areas: map.areas ?? [], looks: this.look.looks, body: this.body, garden, uid, fit}),
+      this.art.call('areas', {...this.look, areas: map.areas ?? [], body: this.body, garden, uid, fit}),
       life ? this.art.call('life', life).catch(() => null) : null,
     ])
       .then(([art, lifeArt]) => {
@@ -1193,6 +1247,10 @@ class MowbiteMap {
       areas: this.map.areas ?? [],
       garden: parts,
       looks: this.look.looks,
+      lookVariants: this.look.lookVariants,
+      lookSizes: this.look.lookSizes,
+      lookTurns: this.look.lookTurns,
+      lookClosed: this.look.lookClosed,
       body: this.body,
       fit,
       uid: this.uid,
@@ -1512,6 +1570,9 @@ class MowbiteMap {
     // svg y points down, so the map's ccw heading becomes a cw rotation
     const deg = (-pose.heading * 180) / Math.PI;
 
+    // its outline where a crown or a parasol hides it
+    const under = this.underLayer.querySelector('.mowerUnderBody');
+    if (under && shape) under.setAttribute('points', shape.corners.map((c) => `${c.x},${-c.y}`).join(' '));
     // the body as it really is, under the icon
     if (shape) {
       if (!this.bodyLayer.firstElementChild) this.bodyLayer.innerHTML = '<polygon class="mowerBody"/>';
