@@ -35,6 +35,7 @@ KEYS = (
     "lookSizes",
     "lookTurns",
     "lookClosed",
+    "lookGrounds",
     "keepRectangle",
     "garden",
     "weather",

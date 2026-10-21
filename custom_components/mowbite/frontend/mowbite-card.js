@@ -234,11 +234,11 @@ function artOps(art) {
     life: (input) => (art.gardenLife ? art.gardenLife(input) : null),
     // the garden style's textures, fills and things in the app's own units (its 400 wide square, fit: where the map
     // lies in it), and the real edges in metres
-    areas({areas, looks, lookVariants, lookSizes, lookTurns, lookClosed, body, garden, uid, fit}) {
+    areas({areas, looks, lookVariants, lookSizes, lookTurns, lookClosed, lookGrounds, body, garden, uid, fit}) {
       // ART_API 3: the whole garden as MapView draws it, placed, clipped and turned by the app itself, its edges in
       // the 400 square
       if (art.gardenAreas) {
-        const g = art.gardenAreas({areas, looks, lookVariants, lookSizes, lookTurns, lookClosed, body, uid, fit});
+        const g = art.gardenAreas({areas, looks, lookVariants, lookSizes, lookTurns, lookClosed, lookGrounds, body, uid, fit});
         const e = g.edges;
         return {
           grid: true,
@@ -1102,6 +1102,8 @@ class MowbiteMap {
       lookSizes: settings?.lookSizes ?? {},
       lookTurns: settings?.lookTurns ?? {},
       lookClosed: settings?.lookClosed ?? {},
+      // the ground picked under a picture (soil, mulch, turf, gravel ...)
+      lookGrounds: settings?.lookGrounds ?? {},
     };
     if (JSON.stringify(look) === JSON.stringify(this.look)) return;
     this.look = look;
@@ -1251,6 +1253,7 @@ class MowbiteMap {
       lookSizes: this.look.lookSizes,
       lookTurns: this.look.lookTurns,
       lookClosed: this.look.lookClosed,
+      lookGrounds: this.look.lookGrounds,
       body: this.body,
       fit,
       uid: this.uid,
