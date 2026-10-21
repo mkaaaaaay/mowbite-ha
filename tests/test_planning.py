@@ -152,6 +152,9 @@ def test_lawn_area_from_the_map() -> None:
     # the active areas less the tree in the front one, the inactive path doesn't count
     assert lawn_area(MAP) == pytest.approx(100 + 25 - 1)
     assert lawn_area({"areas": []}) is None
+    # a decoration is only a picture in MowBite, the mower mows under it (and a type it doesn't know changes nothing)
+    decor = {"id": "bed", "properties": {"name": "Bed", "type": "decor"}, "outline": square(2, 2, 3)}
+    assert lawn_area({"areas": [*MAP["areas"], decor]}) == pytest.approx(100 + 25 - 1)
 
 
 def test_planner_sizes() -> None:

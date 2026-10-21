@@ -425,6 +425,9 @@ const de = {
     "Download": "Herunterladen",
     "Download current map": "Aktuelle Karte herunterladen",
     "Draft": "Entwurf",
+    "Decoration": "Deko",
+    "only a picture on the map, the mower ignores it (lying in a lawn, it mows over it)": "nur ein Bild auf der Karte, der Mäher ignoriert es (liegt es im Rasen, mäht er drüber)",
+    "Off: drawn faded. The mower ignores decoration either way.": "Aus: blass gezeichnet. Der Mäher ignoriert Deko so oder so.",
     "Draw": "Zeichnen",
     "An area the map doesn't have (an older job?), left it alone": "Eine Fläche, die es in der Karte nicht gibt (älterer Mähvorgang?), nicht angetastet",
     "Only by day": "Nur tagsüber",
@@ -1656,7 +1659,10 @@ const de = {
     "If an area lies over another one, e.g. a path over the lawn, pick the lawn, tap Take out and then the path. The part under the path drops out of the lawn, the path stays as it is. If it lies fully inside, the rest is split in two through it.": "Liegt eine Fläche über einer anderen, z. B. ein Weg über dem Rasen, wähle den Rasen, tippe „Abziehen“ und dann den Weg. Der Teil unter dem Weg fällt aus dem Rasen heraus, der Weg bleibt, wie er ist. Liegt er ganz darin, wird der Rest durch ihn hindurch in zwei Teile geteilt.",
     "Recorded edges mostly have a point every 10 cm, which makes editing fiddly. Reduce points takes out the ones that barely change the shape. The slider sets how far the edge may move at most.": "Aufgenommene Ränder haben meist alle 10 cm einen Punkt, das macht das Bearbeiten mühsam. „Punkte reduzieren“ nimmt die heraus, die die Form kaum ändern. Der Regler legt fest, wie weit sich der Rand dabei höchstens verschieben darf.",
     "Area types": "Flächentypen",
-    "Mowing areas are driven on and mowed, navigation areas only driven on (e.g. a path between two lawns), the mower doesn't go anywhere else. Obstacles such as beds lie inside a mowing area and are driven around. A draft is just a sketch, the mower ignores it.": "Mähflächen werden befahren und gemäht, Navigationsflächen nur befahren (z. B. ein Weg zwischen zwei Rasenflächen), woanders fährt der Mäher nicht hin. Hindernisse wie Beete liegen in einer Mähfläche und werden umfahren. Ein Entwurf ist nur eine Skizze, den ignoriert der Mäher.",
+    "Mowing areas are driven on and mowed, navigation areas only driven on (e.g. a path between two lawns), the mower doesn't go anywhere else. Obstacles such as beds lie inside a mowing area and are driven around. Decoration such as the beds round the lawn is only a picture on the map, the mower ignores it. A draft is just a sketch, the mower ignores it too.": "Mähflächen werden befahren und gemäht, Navigationsflächen nur befahren (z. B. ein Weg zwischen zwei Rasenflächen), woanders fährt der Mäher nicht hin. Hindernisse wie Beete liegen in einer Mähfläche und werden umfahren. Deko wie die Beete rund um den Rasen ist nur ein Bild auf der Karte, die ignoriert der Mäher. Ein Entwurf ist nur eine Skizze, den ignoriert er auch.",
+    "Snapping": "Einrasten",
+    "Dragged or set close to another area's corner or edge, a point snaps onto it, so the two meet without a gap. A ring shows it. The magnet on the map switches snapping off, on a computer Alt places a single point freely.": "Ziehst oder setzt du einen Punkt nah an die Ecke oder Kante einer anderen Fläche, rastet er dort ein, so stoßen beide ohne Lücke aneinander. Ein Ring zeigt das an. Der Magnet an der Karte schaltet das Einrasten aus, am Computer setzt Alt einen einzelnen Punkt frei.",
+    "For a whole edge at once: pick e.g. a bed, tap Lay against and then the lawn next to it. Its corners close to the lawn move onto the lawn's edge, the slider sets how far they may be off. A mowing area stays as it is, unless both are.": "Für eine ganze Kante auf einmal: Wähle z. B. ein Beet, tippe auf „Anlegen“ und dann auf den Rasen daneben. Seine Ecken nah am Rasen rücken auf dessen Kante, der Schieber legt fest, wie weit sie entfernt sein dürfen. Eine Mähfläche bleibt, wie sie ist, außer beide sind Mähflächen.",
     "Leaving areas out": "Flächen auslassen",
     "Two ways to leave an area out: with don't mow the mower still drives across it, but doesn't mow it. Without the tick at active it ignores the area completely and doesn't even drive on it (standing on it, it gets stuck). An inactive obstacle simply gets mowed over.": "Eine Fläche auslassen geht auf zwei Arten: Mit „nicht mähen“ fährt der Mäher noch über sie, mäht sie aber nicht. Ohne Haken bei „aktiv“ ignoriert er sie ganz und fährt nicht einmal darauf (steht er gerade darauf, kommt er nicht mehr weg). Ein inaktives Hindernis mäht er einfach mit.",
     "The mow angle is the direction of the lanes. With a mowing area picked you set it with the slider (on a phone at the bottom of the map), − and + change it by 1°, the map shows the lanes meanwhile. You can type it in under Mowing settings (with the planner: This area).": "Der Mähwinkel ist die Richtung der Bahnen. Bei gewählter Mähfläche stellst du ihn mit dem Regler ein (am Handy unten auf der Karte), − und + ändern ihn um 1°, die Karte zeigt dabei die Bahnen. Eintippen kannst du ihn unter „Mäheinstellungen“ (mit Planer: „Diese Fläche“).",
@@ -1916,7 +1922,7 @@ const de = {
     "Send it home first": "Erst nach Hause schicken",
     "Driving": "Fahren",
     "Tap Start recording mode, if it's out mowing tap Send it home first. Upright you drive with the joystick. Held sideways the phone becomes a remote control: the left pad drives forward and back, the right one steers, the steps are buttons at the bottom. A phone that doesn't turn gets it with Sideways.": "Tippe „Aufnahmemodus starten“, mäht er gerade, tippe vorher „Erst nach Hause schicken“. Im Hochformat fährst du mit dem Joystick. Hältst du das Handy quer, wird es zur Fernsteuerung: Das linke Feld fährt vor und zurück, das rechte lenkt, die Schritte sind Knöpfe unten. Dreht sich dein Handy nicht mit, tippe „Querformat“.",
-    "With the gear on the map you pick the map style: Plain shows colored areas, Garden draws the garden from above. There ways and obstacles get a picture by their name, with one picked you change it under the map at Picture on the map. Light and shadows, the season, the lawn growing back and a mowing edge can be switched on one by one.": "Über das Zahnrad an der Karte wählst du den Kartenstil: „Schlicht“ zeigt farbige Flächen, „Garten“ zeichnet den Garten von oben. Dort bekommen Wege und Hindernisse ein Bild nach ihrem Namen, ist eins gewählt, änderst du es unter der Karte bei „Bild auf der Karte“. Licht und Schatten, Jahreszeit, nachwachsender Rasen und eine Mähkante schaltest du einzeln dazu.",
+    "With the gear on the map you pick the map style: Plain shows colored areas, Garden draws the garden from above (off until you pick it). There ways, obstacles and decoration get a picture by their name. With one picked you change it under the map at Picture on the map, and its color, size, direction and the ground under it. Light and shadows, the season, the lawn growing back and a mowing edge can be switched on one by one.": "Über das Zahnrad an der Karte wählst du den Kartenstil: „Schlicht“ zeigt farbige Flächen, „Garten“ zeichnet den Garten von oben (aus, bis du ihn wählst). Dort bekommen Wege, Hindernisse und Deko ein Bild nach ihrem Namen. Ist eins gewählt, änderst du es unter der Karte bei „Bild auf der Karte“, dazu Farbe, Größe, Richtung und den Untergrund. Licht und Schatten, Jahreszeit, nachwachsender Rasen und eine Mähkante schaltest du einzeln dazu.",
 };
 exports.default = de;
 
@@ -3378,7 +3384,7 @@ function saveRate(rate) {
 define("@/lib/mowerBody", function (module, exports, require, localStorage, sessionStorage, document, navigator, window, location) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.OUTLINE_LEEWAY = exports.MOWER_MODELS = exports.MAX_BLADE = exports.slic3rPlans = exports.plannerSeen = exports.BODY_SETTINGS = void 0;
+exports.standing = exports.OUTLINE_LEEWAY = exports.MOWER_MODELS = exports.MAX_BLADE = exports.slic3rPlans = exports.plannerSeen = exports.BODY_SETTINGS = void 0;
 exports.outlineOf = outlineOf;
 exports.plannerSettings = plannerSettings;
 exports.loadPlannerSettings = loadPlannerSettings;
@@ -3984,11 +3990,13 @@ function cutBy(type, subject, cut) {
     return out;
 }
 const nothing = (paths) => paths.reduce((s, p) => s + Math.abs(ClipperLib.Clipper.Area(p)), 0) < 1e-4 * SCALE * SCALE;
-const sidesOf = (areas) => areas.filter((a) => (a.properties.type === 'obstacle' || a.properties.type === 'nav') && a.outline.length >= 3);
+const standing = (a) => a.properties.type === 'obstacle' || a.properties.type === 'decor';
+exports.standing = standing;
+const sidesOf = (areas) => areas.filter((a) => ((0, exports.standing)(a) || a.properties.type === 'nav') && a.outline.length >= 3);
 let insidesLast = null;
 function insidesOf(sides, body) {
-    const obstacles = sides.filter((a) => a.properties.type === 'obstacle').map((a) => a.outline);
-    const ways = sides.filter((a) => a.properties.type !== 'obstacle').map((a) => a.outline);
+    const obstacles = sides.filter(exports.standing).map((a) => a.outline);
+    const ways = sides.filter((a) => !(0, exports.standing)(a)).map((a) => a.outline);
     const same = (a, b) => a.length === b.length && a.every((o, i) => o === b[i]);
     const last = insidesLast;
     if (last && last.body === body && same(last.obstacles, obstacles) && same(last.ways, ways))
@@ -4027,7 +4035,7 @@ function realInsides(areas, body) {
     const list = sidesOf(areas);
     const inside = insidesOf(list, body);
     const out = new Map(list.map((a) => {
-        const from = a.properties.type === 'obstacle' ? inside.obstacles : inside.ways;
+        const from = (0, exports.standing)(a) ? inside.obstacles : inside.ways;
         let known = edgeCache.get(a.outline);
         if (!known || known.from !== from) {
             known = { from, edge: biggest(cutBy(ClipperLib.ClipType.ctIntersection, [ccw(toPath(a.outline))], from)) };
@@ -4048,7 +4056,7 @@ function realEdges(areas, body) {
     const sides = sidesOf(areas);
     const inside = insidesOf(sides, body);
     if (!inside.edges) {
-        const obstacles = clipAll(ClipperLib.ClipType.ctUnion, sides.filter((a) => a.properties.type === 'obstacle').map((a) => toPath(a.outline)));
+        const obstacles = clipAll(ClipperLib.ClipType.ctUnion, sides.filter(exports.standing).map((a) => toPath(a.outline)));
         const strip = cutBy(ClipperLib.ClipType.ctDifference, obstacles, inside.obstacles);
         inside.edges = {
             real: cutBy(ClipperLib.ClipType.ctIntersection, obstacles, inside.obstacles).map(fromPath),

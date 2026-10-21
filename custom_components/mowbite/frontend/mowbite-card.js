@@ -204,6 +204,7 @@ const MAP_COLORS = {
   nav: '#29b6f6',
   obstacle: '#ef5350',
   draft: '#888888',
+  decor: '#a1887f',
   selected: '#ff1fa3',
   vertex: '#2196f3',
   stripes: '#ff1fa3',
@@ -262,7 +263,7 @@ function artOps(art) {
           if (type === 'mow') {
             out.fills[a.id] = a.properties.mowable === false ? 'meadow' : `lawn${angles.length}`;
             angles.push(a.properties.angle ?? art.autoMowAngle(a.outline));
-          } else if ((type === 'obstacle' || type === 'nav') && (a.outline ?? []).length > 2) {
+          } else if ((type === 'obstacle' || type === 'nav' || type === 'decor') && (a.outline ?? []).length > 2) {
             const look = art.areaLook(a, looks);
             out.fills[a.id] = art.groundOf(look);
             if (!art.isThing(look)) continue;
@@ -520,6 +521,14 @@ const MAP_STYLE = `
     stroke-width: 1;
   }
 
+  /* only a picture (a bed round the lawn), the mower doesn't know it */
+  .decorArea {
+    fill: var(--c-decor);
+    fill-opacity: 0.25;
+    stroke: var(--c-decor);
+    stroke-width: 1;
+  }
+
   .inactive {
     fill-opacity: 0.08;
     stroke-dasharray: 4 3;
@@ -628,6 +637,63 @@ const MAP_STYLE = `
   .garden .realGrass {
     fill: #4e8d3e;
     fill-opacity: 1;
+  }
+
+  /* the garden style's lines in the colors of a garden like in the app: the outlines soft and dark, the plan and the
+     real edges like chalk, the track a fresh light green */
+  .garden .mowArea {
+    stroke: #24461c;
+    stroke-opacity: 0.55;
+    stroke-width: 1;
+  }
+
+  .garden .navArea,
+  .garden .obstacleArea,
+  .garden .decorArea {
+    stroke: #4a3a28;
+    stroke-opacity: 0.5;
+    stroke-width: 1;
+  }
+
+  .garden .draftArea {
+    stroke: #fff6e0;
+    stroke-opacity: 0.75;
+  }
+
+  .garden .skipMowing {
+    stroke: #eadfae;
+    stroke-opacity: 0.85;
+    stroke-width: 1.2;
+    stroke-dasharray: 5 3;
+  }
+
+  .garden .realEdge {
+    stroke: #f6eedb;
+    stroke-opacity: 0.7;
+    stroke-width: 1;
+    stroke-dasharray: 4 3;
+  }
+
+  .garden .planTodo,
+  .garden .planLane,
+  .garden .planOutline {
+    stroke: #fffaf0;
+    stroke-opacity: 0.35;
+  }
+
+  .garden .track {
+    stroke: #e9f6c9;
+    stroke-opacity: 0.75;
+  }
+
+  .garden .swath path {
+    stroke: #e9f6c9;
+    stroke-opacity: 0.2;
+  }
+
+  .garden .swath path.swathEnd {
+    fill: #e9f6c9;
+    fill-opacity: 0.2;
   }
 
   /* left uncut in the last job */
@@ -1174,7 +1240,7 @@ class MowbiteMap {
       const drawn = areas.map((area) => {
         const p = area.properties ?? {};
         const cls = [
-          p.type === 'nav' ? 'navArea' : p.type === 'obstacle' ? 'obstacleArea' : p.type === 'mow' ? 'mowArea' : 'draftArea',
+          {nav: 'navArea', obstacle: 'obstacleArea', decor: 'decorArea', mow: 'mowArea'}[p.type] ?? 'draftArea',
           p.active === false ? 'inactive' : '',
           p.mowable === false ? 'skipMowing' : '',
         ]

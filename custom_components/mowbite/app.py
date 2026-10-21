@@ -225,9 +225,11 @@ class AppStatus:
         # called with the endpoints that answered, they're features
         self._found = found
         self.version: str | None = None
-        # the map's pictures the app serves (/mowbite-art.js): their interface version, and the file once asked
+        # the map's pictures the app serves (/mowbite-art.js): their interface version, and the file once asked. asked
+        # again after each time the version was read (hourly): a version can be published again under its name
         self.art_api: int | None = None
-        self._art: tuple[str, str] | None = None
+        self._art: tuple[int, str] | None = None
+        self._version_read = 0
         self.system: dict[str, Any] | None = None
         self.schedule: dict[str, Any] | None = None
         self.schedule_log: dict[str, Any] | None = None
@@ -263,7 +265,7 @@ class AppStatus:
             return None
 
     async def async_art(self) -> tuple[int, str] | None:
-        """The map's pictures the app serves and their interface version, asked once per app version."""
+        """The map's pictures the app serves and their interface version, asked once per reading of its version."""
         if not self._url:
             return None
         if self.version is None:
@@ -275,15 +277,16 @@ class AppStatus:
                 info = None
             if isinstance(info, dict) and isinstance(info.get("version"), str):
                 self.version = info["version"]
+                self._version_read += 1
                 art = info.get("art")
                 self.art_api = art if isinstance(art, int) and not isinstance(art, bool) else None
         if self.art_api is None or self.version is None:
             return None
-        if self._art is None or self._art[0] != self.version:
+        if self._art is None or self._art[0] != self._version_read:
             text = await self._get(ART_PATH)
             if text is None or len(text) > ART_MAX:
                 return None
-            self._art = (self.version, text)
+            self._art = (self._version_read, text)
         return self.art_api, self._art[1]
 
     async def async_refresh(self) -> None:
@@ -298,6 +301,7 @@ class AppStatus:
             version = info.get("version") if isinstance(info, dict) else None
             if isinstance(version, str):
                 self.version = version
+                self._version_read += 1
                 art = info.get("art")
                 self.art_api = art if isinstance(art, int) and not isinstance(art, bool) else None
                 found.append("version")

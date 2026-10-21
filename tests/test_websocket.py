@@ -12,6 +12,7 @@ from homeassistant.components.frontend import DATA_EXTRA_MODULE_URL
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
+from custom_components.mowbite.app import VERSION_EVERY
 from custom_components.mowbite.mower import Mower
 
 from .conftest import ROBOT_STATE, send
@@ -206,6 +207,20 @@ async def test_app_reads_only(
     await client.send_json_auto_id({"type": "mowbite/art", "entity_id": MOWER})
     answer = await client.receive_json()
     assert answer["result"] == {"api": 1, "code": "export const ART_API = 1;"}
+
+    # asked once, and again after the version was read the next time: a version can be published again under its name
+    def art_asked() -> int:
+        return sum(str(call[1]).endswith("/mowbite-art.js") for call in aioclient_mock.mock_calls)
+
+    await client.send_json_auto_id({"type": "mowbite/art", "entity_id": MOWER})
+    await client.receive_json()
+    assert art_asked() == 1
+    status = entry.runtime_data.status
+    status._round = VERSION_EVERY
+    await status.async_refresh()
+    await client.send_json_auto_id({"type": "mowbite/art", "entity_id": MOWER})
+    assert (await client.receive_json())["result"]["api"] == 1
+    assert art_asked() == 2
 
 
 async def test_params_only_what_the_card_needs(

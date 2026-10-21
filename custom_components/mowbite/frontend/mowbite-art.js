@@ -4880,7 +4880,7 @@ function facing(a, areas, looks, at) {
     const from = mid(a.outline);
     let near = null;
     for (const b of areas) {
-        if (b === a || b.outline.length < 3 || (b.properties.type !== 'obstacle' && b.properties.type !== 'nav'))
+        if (b === a || b.outline.length < 3 || (!(0, mowerBody_1.standing)(b) && b.properties.type !== 'nav'))
             continue;
         if (!SEATS.includes(areaLook(b, looks)))
             continue;
@@ -4913,7 +4913,7 @@ function gardenThings(areas, looks, body, fit, own = {}) {
             out.lawns.set(a.id, out.angles.length);
             out.angles.push(a.properties.angle ?? (0, mowStripes_1.autoMowAngle)(a.outline));
         }
-        else if ((type === 'obstacle' || type === 'nav') && a.outline.length > 2) {
+        else if (((0, mowerBody_1.standing)(a) || type === 'nav') && a.outline.length > 2) {
             const look = areaLook(a, looks);
             out.looks.set(a.id, look);
             if (!(0, exports.isThing)(look))
@@ -5244,7 +5244,7 @@ const pieceCache = new WeakMap();
 function lawnsOf(areas) {
     return cached(lawnsCache, areas, '', () => {
         const lawns = areas.filter((a) => a.properties.type === 'mow' && a.properties.active !== false && a.properties.mowable !== false && a.outline.length > 2);
-        const obstacles = areas.filter((a) => a.properties.type === 'obstacle' && a.outline.length > 2);
+        const obstacles = areas.filter((a) => (0, mowerBody_1.standing)(a) && a.outline.length > 2);
         const bySize = [...areas].sort((a, b) => (0, geometry_1.polygonArea)(b.outline) - (0, geometry_1.polygonArea)(a.outline));
         const biggest = bySize.find((a) => lawns.includes(a));
         const angle = biggest ? (biggest.properties.angle ?? (0, mowStripes_1.autoMowAngle)(biggest.outline)) : 0;
@@ -5404,7 +5404,7 @@ function lifeScene(s) {
     const besideD = stonesD
         ? rings(s.areas.filter((a) => {
             const type = a.properties.type ?? '';
-            return a.outline.length > 2 && !hidden.has(type) && (type === 'nav' || type === 'obstacle' || (type === 'mow' && !lawns.includes(a)));
+            return a.outline.length > 2 && !hidden.has(type) && (type === 'nav' || (0, mowerBody_1.standing)(a) || (type === 'mow' && !lawns.includes(a)));
         }), at)
         : '';
     const garden = (0, gardenLook_1.gardenThings)(s.areas, s.looks, s.body ?? null, fit, {
@@ -5609,7 +5609,7 @@ function autoMowAngle(outline) {
 define("@/lib/mowerBody", function (module, exports, require, localStorage, sessionStorage, document, navigator, window, location) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.OUTLINE_LEEWAY = exports.MOWER_MODELS = exports.MAX_BLADE = exports.slic3rPlans = exports.plannerSeen = exports.BODY_SETTINGS = void 0;
+exports.standing = exports.OUTLINE_LEEWAY = exports.MOWER_MODELS = exports.MAX_BLADE = exports.slic3rPlans = exports.plannerSeen = exports.BODY_SETTINGS = void 0;
 exports.outlineOf = outlineOf;
 exports.plannerSettings = plannerSettings;
 exports.loadPlannerSettings = loadPlannerSettings;
@@ -6215,11 +6215,13 @@ function cutBy(type, subject, cut) {
     return out;
 }
 const nothing = (paths) => paths.reduce((s, p) => s + Math.abs(ClipperLib.Clipper.Area(p)), 0) < 1e-4 * SCALE * SCALE;
-const sidesOf = (areas) => areas.filter((a) => (a.properties.type === 'obstacle' || a.properties.type === 'nav') && a.outline.length >= 3);
+const standing = (a) => a.properties.type === 'obstacle' || a.properties.type === 'decor';
+exports.standing = standing;
+const sidesOf = (areas) => areas.filter((a) => ((0, exports.standing)(a) || a.properties.type === 'nav') && a.outline.length >= 3);
 let insidesLast = null;
 function insidesOf(sides, body) {
-    const obstacles = sides.filter((a) => a.properties.type === 'obstacle').map((a) => a.outline);
-    const ways = sides.filter((a) => a.properties.type !== 'obstacle').map((a) => a.outline);
+    const obstacles = sides.filter(exports.standing).map((a) => a.outline);
+    const ways = sides.filter((a) => !(0, exports.standing)(a)).map((a) => a.outline);
     const same = (a, b) => a.length === b.length && a.every((o, i) => o === b[i]);
     const last = insidesLast;
     if (last && last.body === body && same(last.obstacles, obstacles) && same(last.ways, ways))
@@ -6258,7 +6260,7 @@ function realInsides(areas, body) {
     const list = sidesOf(areas);
     const inside = insidesOf(list, body);
     const out = new Map(list.map((a) => {
-        const from = a.properties.type === 'obstacle' ? inside.obstacles : inside.ways;
+        const from = (0, exports.standing)(a) ? inside.obstacles : inside.ways;
         let known = edgeCache.get(a.outline);
         if (!known || known.from !== from) {
             known = { from, edge: biggest(cutBy(ClipperLib.ClipType.ctIntersection, [ccw(toPath(a.outline))], from)) };
@@ -6279,7 +6281,7 @@ function realEdges(areas, body) {
     const sides = sidesOf(areas);
     const inside = insidesOf(sides, body);
     if (!inside.edges) {
-        const obstacles = clipAll(ClipperLib.ClipType.ctUnion, sides.filter((a) => a.properties.type === 'obstacle').map((a) => toPath(a.outline)));
+        const obstacles = clipAll(ClipperLib.ClipType.ctUnion, sides.filter(exports.standing).map((a) => toPath(a.outline)));
         const strip = cutBy(ClipperLib.ClipType.ctDifference, obstacles, inside.obstacles);
         inside.edges = {
             real: cutBy(ClipperLib.ClipType.ctIntersection, obstacles, inside.obstacles).map(fromPath),
