@@ -31,7 +31,7 @@ const CLIPPER = 'node_modules/clipper-lib/clipper.js';
 // what both need that only the app's pages use
 const COMMON_STUBS = {
   react:
-    'module.exports = {useId, useEffect() {}, useMemo: (f) => f(), useState: (v) => [v, () => {}], useRef: (v) => ({current: v}), useSyncExternalStore: (s, get) => get()};',
+    'module.exports = {useId, useEffect() {}, useMemo: (f) => f(), useState: (v) => [v, () => {}], useRef: (v) => ({current: v}), useSyncExternalStore: (s, get) => get(), memo: (f) => f};',
   'react-dom': 'module.exports = {createPortal: () => null};',
   '@/hooks/useMowerMap': 'module.exports = {};',
   '@/lib/native': 'module.exports = {isApp: () => false};',
