@@ -59,8 +59,10 @@ after it (OpenMower reports one when it's sent home in the middle of a path).
 You need Home Assistant 2026.9 or newer and the MQTT broker on your mower reachable from Home Assistant
 (port 1883).
 
-**With HACS**: three dots top right, Custom repositories, add `https://github.com/mkaaaaaay/mowbite-ha` with
-the type Integration. Then search for MowBite for OpenMower in HACS, download it and restart Home Assistant.
+**With HACS** (recommended): MowBite for OpenMower is in HACS' default list. Search for it in HACS, download it
+and restart Home Assistant, or open it in your HACS directly:
+
+[![Open in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=mkaaaaaay&repository=mowbite-ha&category=integration)
 
 **By hand**: copy `custom_components/mowbite` into the `custom_components` folder of your Home Assistant
 configuration and restart.
