@@ -19,6 +19,8 @@ APP = "app:"
 EVENTS = "events"
 # map/json came with an area to mow
 MAP = "map"
+# the gps datum came (params/json): the map has a place on earth
+DATUM = "datum"
 
 
 class Features:

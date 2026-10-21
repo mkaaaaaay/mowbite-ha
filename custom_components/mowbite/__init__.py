@@ -22,7 +22,7 @@ from homeassistant.util import dt as dt_util
 from . import websocket
 from .app import AppSettings, AppStatus
 from .const import CONF_APP_URL, CONF_MAP, CONF_PREFIX, CONF_SIZES, DOMAIN
-from .features import ACTION, APP, Features
+from .features import ACTION, APP, DATUM, Features
 from .mower import KEY_ACTIONS, Mower
 from .planning import Planning
 from .snooze import ACTION_SNOOZE_HOUR, ACTION_SNOOZE_MORNING, Snooze, next_morning
@@ -30,6 +30,7 @@ from .snooze import ACTION_SNOOZE_HOUR, ACTION_SNOOZE_MORNING, Snooze, next_morn
 PLATFORMS = [
     Platform.BINARY_SENSOR,
     Platform.BUTTON,
+    Platform.DEVICE_TRACKER,
     Platform.EVENT,
     Platform.LAWN_MOWER,
     Platform.NUMBER,
@@ -141,6 +142,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: MowbiteConfigEntry) -> b
         features.add(ACTION + action_id for action_id in mower.actions or {})
 
     entry.async_on_unload(mower.add_listener(KEY_ACTIONS, actions))
+
+    @callback
+    def datum() -> None:
+        if mower.datum is not None:
+            features.add([DATUM])
+
+    entry.async_on_unload(mower.add_change_listener(datum))
     # the app may be off as well, the map then has the app's default colours until it's there
     entry.async_on_unload(await app.async_start())
     entry.async_on_unload(await status.async_start())

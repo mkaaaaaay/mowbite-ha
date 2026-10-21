@@ -45,6 +45,8 @@ ACTION_SKIP_PATH = "mower_logic:mowing/skip_path"
 # keys listeners can ask for, sensors are "sensor:<id>"
 KEY_STATE = "state"
 KEY_ACTIONS = "actions"
+# position/json, several times a second while driving
+KEY_POSITION = "position"
 
 # robot_state comes about once a second while ros runs, this long without it the mower counts as gone
 # even if the broker is still there
@@ -436,7 +438,7 @@ class Mower:
             self.track.add(data["x"], data.get("y", 0), bool(attributes.get("blades")), job_id)
             if job_id and job_id != self._seeded:
                 self._seed(job_id)
-            self._changed()
+            self._notify(KEY_POSITION)
         elif topic == TOPIC_MAP:
             data = _json(payload)
             if isinstance(data, dict) and isinstance(data.get("areas"), list):
