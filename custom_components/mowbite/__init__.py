@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import hashlib
+import logging
 from pathlib import Path
 
 from homeassistant.components.frontend import add_extra_js_url
@@ -26,6 +27,8 @@ from .features import ACTION, APP, DATUM, Features
 from .mower import KEY_ACTIONS, Mower
 from .planning import Planning
 from .snooze import ACTION_SNOOZE_HOUR, ACTION_SNOOZE_MORNING, Snooze, next_morning
+
+_LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [
     Platform.BINARY_SENSOR,
@@ -50,6 +53,11 @@ CARD_FILE = Path(__file__).parent / "frontend" / "mowbite-card.js"
 # the app's pictures and its dashboard logic next to it, loaded by the card with the same version
 ART_FILES = [CARD_FILE.parent / "mowbite-art.js", CARD_FILE.parent / "mowbite-app.js"]
 CARD_PATH = f"{CARD_URL}/{CARD_FILE.name}"
+# the notifications' blueprint comes with the integration too (HACS has no blueprints): into Home Assistant's
+# blueprints once, unless one from this repository is there already (imported by hand). Importing it again in Home
+# Assistant updates it
+BLUEPRINT_FILE = Path(__file__).parent / "blueprints" / "notify.yaml"
+BLUEPRINT_SOURCE = "https://github.com/mkaaaaaay/mowbite-ha/blob/main/blueprints/automation/mowbite/notify.yaml"
 
 
 @dataclass
@@ -80,7 +88,23 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     url = f"{CARD_PATH}?v={version}"
     add_extra_js_url(hass, url)
     await _async_card_resource(hass, url)
+    await hass.async_add_executor_job(install_blueprint, Path(hass.config.path("blueprints", "automation")))
     return True
+
+
+def install_blueprint(folder: Path) -> None:
+    """Puts the blueprint into the automations' blueprints folder, once Home Assistant made it (it fills a new one
+    with its own examples first)."""
+    target = folder / DOMAIN / BLUEPRINT_FILE.name
+    try:
+        if not folder.is_dir() or target.exists():
+            return
+        if any(BLUEPRINT_SOURCE in path.read_text(encoding="utf-8", errors="ignore") for path in folder.glob("**/*.yaml")):
+            return
+        target.parent.mkdir(exist_ok=True)
+        target.write_bytes(BLUEPRINT_FILE.read_bytes())
+    except OSError as err:
+        _LOGGER.warning("Can't put the notifications blueprint into %s: %s", folder, err)
 
 
 async def _async_card_resource(hass: HomeAssistant, url: str | None) -> None:

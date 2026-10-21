@@ -2020,6 +2020,19 @@ class MowbiteCard extends HTMLElement {
             },
           },
         },
+        {
+          name: 'map_style',
+          selector: {
+            select: {
+              mode: 'dropdown',
+              options: [
+                {value: 'app', label: 'As set in the MowBite app'},
+                {value: 'plain', label: 'Plain'},
+                {value: 'garden', label: 'Garden'},
+              ],
+            },
+          },
+        },
         {name: 'map_height', selector: {number: {min: 150, max: 1000, step: 10, mode: 'box', unit_of_measurement: 'px'}}},
         {name: 'status', selector: {boolean: {}}},
         {name: 'today', selector: {boolean: {}}},
@@ -2031,6 +2044,7 @@ class MowbiteCard extends HTMLElement {
           entity: 'Mower',
           theme: 'Look',
           map: 'Map',
+          map_style: 'Map style (garden without the MowBite address: pictures by the areas\' names)',
           map_height: 'Map height (empty: square like in the app)',
           status: 'Status and buttons',
           today: 'Today: what was mowed, the last runs, the next start',
@@ -2206,7 +2220,7 @@ class MowbiteCard extends HTMLElement {
       this._settings = data.settings ?? {};
       this._applyLook();
       this._map?.setIcons(this._settings.icons);
-      this._map?.setLook(this._settings);
+      this._map?.setLook(this._look());
     }
     this._updateBody();
     this._map?.setSpeed(this._speed);
@@ -2222,6 +2236,12 @@ class MowbiteCard extends HTMLElement {
       this._map?.setTrack(data.track);
     }
     this._update();
+  }
+
+  // the app's settings with the card's own map style (map_style: plain or garden, else as set in the app)
+  _look() {
+    const style = this._config.map_style;
+    return style === 'plain' || style === 'garden' ? {...this._settings, mapStyle: style} : this._settings;
   }
 
   // the app's sizes, the planner's (measured on the mower), the ones set in the integration
@@ -2421,7 +2441,7 @@ class MowbiteCard extends HTMLElement {
     this._map = new MowbiteMap(this.shadowRoot.querySelector('.map'));
     if (this._art) this._map.setArt(this._art.art);
     this._map.setIcons(this._settings?.icons);
-    this._map.setLook(this._settings);
+    this._map.setLook(this._look());
     this._map.setBody(this._body ?? null);
     if (this._mapData) this._map.setMap(this._mapData);
     if (this._track) this._map.setTrack(this._track);
@@ -2680,7 +2700,7 @@ class MowbiteCard extends HTMLElement {
       this._map.setLight(this._config.blur === false);
       this._map.setPose(data.position ?? state.pose, emergency);
       this._map.setTodo(progress?.todo ?? null);
-      if (dash) this._map.setLife({...dash.life(this._settings, data.datum, driving), rain: !!state.rain_detected, driving});
+      if (dash) this._map.setLife({...dash.life(this._look(), data.datum, driving), rain: !!state.rain_detected, driving});
     }
 
     // a waiting skip is dropped when there's nothing to skip anymore or the connection went

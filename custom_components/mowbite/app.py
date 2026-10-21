@@ -42,6 +42,11 @@ KEYS = (
 )
 
 
+# without a MowBite address there's no app to go by: the map always shown, plain like the app's own default (a card
+# can still have the garden, map_style)
+WITHOUT_APP: dict[str, Any] = {"dashboard": {"map": "always"}}
+
+
 class CannotReachApp(Exception):
     """No MowBite answers at that address."""
 
@@ -62,12 +67,12 @@ async def async_fetch(hass: HomeAssistant, url: str) -> dict[str, Any]:
 
 
 class AppSettings:
-    """The app's settings, read again every few minutes, empty without an address (the card uses the app's defaults)."""
+    """The app's settings, read again every few minutes, WITHOUT_APP without an address."""
 
     def __init__(self, hass: HomeAssistant, url: str | None) -> None:
         self._hass = hass
         self._url = url
-        self.data: dict[str, Any] = {}
+        self.data: dict[str, Any] = {} if url else WITHOUT_APP
         self.version = 0
         self._listeners: list[Callable[[], None]] = []
 

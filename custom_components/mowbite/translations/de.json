@@ -155,7 +155,7 @@
         }
       },
       "planner_perimeter_order": {
-        "name": "Randrunden",
+        "name": "Randrunden zuerst oder zuletzt",
         "state": {
           "first": "Vor den Bahnen",
           "last": "Nach den Bahnen"
@@ -361,8 +361,8 @@
           "mower": "Mäher-Maße"
         },
         "data_description": {
-          "app_url": "Wo die MowBite-App läuft, z. B. http://openmower:8080. Die Karte bekommt dann die Farben und Symbole aus der App. Leer: die Standardwerte der App.",
-          "map": "Wann die MowBite-Karte die Karte zeigt, sofern an einer Karte nichts anderes eingestellt ist.",
+          "app_url": "Wo die MowBite-App läuft, z. B. http://openmower:8082. Die Karte sieht dann so aus, wie es in der App eingestellt ist. Leer: die Karte immer, schlicht.",
+          "map": "Wann die MowBite-Karte die Karte zeigt, sofern an einer Karte nichts anderes eingestellt ist. Ohne MowBite-Adresse heißt wie in der App: immer.",
           "mower": "Für den Umriss des Mähers und den Streifen, den sein Messer auf der Karte schneidet. In der MowBite-App eingestellte Maße gehen vor."
         },
         "title": "Karte wie in MowBite"

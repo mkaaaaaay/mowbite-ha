@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -9,7 +10,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from homeassistant.components.lovelace.const import LOVELACE_DATA
 from homeassistant.core import HomeAssistant
 
-from custom_components.mowbite import CARD_PATH
+from custom_components.mowbite import BLUEPRINT_FILE, BLUEPRINT_SOURCE, CARD_PATH, install_blueprint
 from custom_components.mowbite.mower import Mower
 
 
@@ -67,3 +68,36 @@ def test_the_app_files_come_along() -> None:
     assert "export const APP_API = 1;" in app and "export const DASHBOARD_CSS" in app
     # drawing only, nothing loaded from elsewhere
     assert "fetch(" not in art.split("// what the card uses")[0].split("const transportMowers")[0]
+
+
+def test_blueprint_comes_with_the_integration() -> None:
+    # the one in the integration is the one the README links to
+    shown = Path(__file__).parent.parent / "blueprints/automation/mowbite/notify.yaml"
+    assert BLUEPRINT_FILE.read_bytes() == shown.read_bytes()
+    assert BLUEPRINT_SOURCE in BLUEPRINT_FILE.read_text(encoding="utf-8")
+
+
+def test_install_blueprint(tmp_path: Path) -> None:
+    folder = tmp_path / "automation"
+    # not before Home Assistant made the folder (it fills a new one with its examples)
+    install_blueprint(folder)
+    assert not folder.exists()
+
+    folder.mkdir()
+    install_blueprint(folder)
+    target = folder / "mowbite" / "notify.yaml"
+    assert target.read_bytes() == BLUEPRINT_FILE.read_bytes()
+
+    # one changed by hand stays as it is
+    target.write_text("changed", encoding="utf-8")
+    install_blueprint(folder)
+    assert target.read_text(encoding="utf-8") == "changed"
+
+
+def test_no_second_blueprint(tmp_path: Path) -> None:
+    # imported by hand from GitHub it's under the user's name, not twice
+    imported = tmp_path / "mkaaaaaay" / "notify.yaml"
+    imported.parent.mkdir()
+    imported.write_bytes(BLUEPRINT_FILE.read_bytes())
+    install_blueprint(tmp_path)
+    assert not (tmp_path / "mowbite").exists()

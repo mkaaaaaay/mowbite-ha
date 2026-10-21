@@ -23,7 +23,9 @@ mower's MQTT broker directly, no cloud and no extra add-on.
 - **How far it got**: the area being mowed, how far through it is, the last problem the mower had (a docking
   retry, GPS lost, an emergency stop) and the lawn's area.
 - **Only what your mower has**: the entities below come once the mower or the app first provides the data, and
-  stay after that, also while the mower is off for the winter. Nothing shows that your mower can't do.
+  stay after that, also while the mower is off for the winter. None of them shows that your mower can't do. (The
+  sensors above are always there, one your OpenMower doesn't report stays unavailable, the charge current with
+  `ignore_charging_current` for example.)
   - Skip the rest of a path, drop an interrupted job (newer OpenMower)
   - The time left for the area and the whole job, how long mowing all areas takes, the area left uncut after a
     job with a button to mow just that, the place where the mower came closest to an edge, and the planning
@@ -42,7 +44,9 @@ mower's MQTT broker directly, no cloud and no extra add-on.
   areas, obstacles, the docking station, the mower and its track. On wide screens side by side, on phones one
   below the other. It comes with the integration, no resource to add.
 - **Map colours and icons from MowBite**: with the address of your MowBite container set, the map uses the
-  colours, icons and icon sizes you picked in the app.
+  colours, icons and icon sizes you picked in the app, and its garden style with the pictures picked for each area.
+  Without it a card can have the garden style too, the pictures then go by the areas' names (an area called "tree"
+  or "Baum" gets a tree, "table" a table, "parasol" a parasol).
 - **The mower at its real size**: with the mower's sizes known the map draws its outline with the blade, and along
   the track the strip the blade really cut.
 - **What's still to mow**: while mowing, the map shows the rest of the area's plan as a thin dashed line, after a
@@ -56,6 +60,16 @@ starts, the mower docks, the map changes), never polled. The track of a job that
 mower's position history (OpenMower 1.3 and newer). An emergency stop is told once it has lasted 10 seconds,
 like MowBite's own notifications do it, and a navigation error only when the mower doesn't head home right
 after it (OpenMower reports one when it's sent home in the middle of a path).
+
+### Which OpenMower
+
+- **1.0.2 and newer**: the mower, its sensors and the map.
+- **1.1.1**: the GPS tracker (it needs the GPS datum OpenMower publishes from then on).
+- **1.3.0**: the mower moving on the map and its track, the events, the runs of the day and the track of a job
+  that was already running when Home Assistant started.
+- **1.4.0**: the event for a mow motor that didn't start.
+- **Current edge** (not in a release yet): dropping an interrupted job, how far through the area and the lanes
+  left without the MowBite Planner, and the reason for an emergency stop without the MowBite address.
 
 ## Install
 
@@ -83,10 +97,11 @@ It checks that a mower answers before it saves. Several mowers work too, each is
 
 Under **Configure** on the integration:
 
-- **MowBite address**: where your MowBite container runs, for example `http://openmower:8080`. Optional, the
-  map uses MowBite's default colours and icons without it.
-- **Show the map**: when the cards show the map, as set in the MowBite app, only while the mower drives, always
-  or never. A card can still have its own setting.
+- **MowBite address**: where your MowBite container runs, for example `http://openmower:8082`. Optional, without
+  it the map is always shown, plain, with MowBite's default colours and icons. A card can still have the garden
+  style (`map_style: garden`).
+- **Show the map**: when the cards show the map, as set in the MowBite app (always without a MowBite address),
+  only while the mower drives, always or never. A card can still have its own setting.
 - **Mower sizes**: for the mower's outline and the strip its blade cuts on the map. Pick your mower, or Own sizes
   for a form like the one in the MowBite app (in cm, from the middle between the rear drive wheels). Sizes set in
   the MowBite app come first, then the ones the MowBite Planner has, then these.
@@ -99,6 +114,7 @@ Edit a dashboard, add a card and search for MowBite for OpenMower. In YAML:
 type: custom:mowbite-card
 entity: lawn_mower.openmower
 map: integration   # integration, app, auto (while it drives), always or never
+map_style: app     # app (as set in MowBite), plain or garden
 map_height: 260    # pixels, leave it out for a square map like in the app
 status: true       # false shows only the map
 today: true        # false leaves out "Today" (what was mowed, the last runs, the next start)
@@ -114,9 +130,9 @@ English, with MowBite's own words.
 
 It draws the map the way your MowBite does: its colours, the mower and dock icon, the garden style with the pictures
 picked for the areas, the real edges and the mower's outline. With the MowBite address set and a MowBite that serves
-its pictures (1.4 and newer) the card takes them from the mower, so it looks like the MowBite the mower runs, else the
-ones that came with the integration. The mower's pictures run in a sandbox of their own, they can't reach Home
-Assistant.
+its pictures (1.4.0-beta.7 and newer) the card takes them from the mower, so it looks like the MowBite the mower
+runs, else the ones that came with the integration. The mower's pictures run in a sandbox of their own, they can't
+reach Home Assistant.
 
 The map zooms with the buttons, the mouse wheel or two fingers, and moves when dragged. While the mower drives the
 map follows it like the app's overview: a few metres around the mower, with the mower gliding in the middle.
@@ -125,7 +141,8 @@ again.
 
 ## Notifications
 
-Settings, Automations & scenes, Blueprints, Import blueprint:
+The blueprint comes with the integration: after installing and restarting it's under Settings, Automations &
+scenes, Blueprints. One you imported by hand before stays as it is. By hand, Import blueprint:
 
 ```
 https://github.com/mkaaaaaay/mowbite-ha/blob/main/blueprints/automation/mowbite/notify.yaml

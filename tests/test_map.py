@@ -16,6 +16,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.util import dt as dt_util
 
+from custom_components.mowbite.app import WITHOUT_APP
 from custom_components.mowbite.const import CONF_APP_URL, CONF_MAP, CONF_MOWER, CONF_SIZES, MOWER_MODELS
 from custom_components.mowbite.mower import Mower, RpcError, Track, _history
 
@@ -128,7 +129,8 @@ async def test_feed(hass: HomeAssistant, hass_ws_client: WebSocketGenerator, mow
     assert first["map"] == MAP
     assert first["track"] == {"reset": True, "points": [[0, 0, True], [1, 0, True]]}
     assert first["position"] == {"x": 1, "y": 0, "heading": 1.2, "blades": True, "job_id": "job1"}
-    assert first["settings"] == {}
+    # no MowBite address: the map always
+    assert first["settings"] == WITHOUT_APP
 
     # afterwards only what's new
     send(mower, "position/json", _position(2, 0, blades=False))

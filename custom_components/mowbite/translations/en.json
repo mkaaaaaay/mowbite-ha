@@ -155,7 +155,7 @@
         }
       },
       "planner_perimeter_order": {
-        "name": "Outline loops",
+        "name": "Outline loops first or last",
         "state": {
           "first": "Before the lanes",
           "last": "After the lanes"
@@ -361,8 +361,8 @@
           "mower": "Mower sizes"
         },
         "data_description": {
-          "app_url": "Where the MowBite app runs, e.g. http://openmower:8080. The map then has the colours and symbols set in the app. Empty: the app's defaults.",
-          "map": "When the MowBite card shows the map, unless a card is set otherwise.",
+          "app_url": "Where the MowBite app runs, e.g. http://openmower:8082. The map then looks the way it's set in the app. Empty: the map is always shown, plain.",
+          "map": "When the MowBite card shows the map, unless a card is set otherwise. Without a MowBite address, as in the app means always.",
           "mower": "For the mower's outline and the strip its blade cuts on the map. Sizes set in the MowBite app come first."
         },
         "title": "Map like in MowBite"

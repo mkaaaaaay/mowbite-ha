@@ -43,6 +43,8 @@ class MowbiteTracker(MowbiteEntity, TrackerEntity):
 
     def __init__(self, entry: MowbiteConfigEntry) -> None:
         super().__init__(entry, "position")
+        # where it is on its map and how exactly (m)
+        self._here: tuple[float, float, float] | None = None
         self._written: tuple[float, float] | None = None
         self._written_at = 0.0
         self._written_available: bool | None = None
@@ -54,30 +56,39 @@ class MowbiteTracker(MowbiteEntity, TrackerEntity):
 
     @property
     def available(self) -> bool:
-        return super().available and self.mower.datum is not None and self._point() is not None
+        return super().available and self.mower.datum is not None and self._here is not None
 
-    def _point(self) -> tuple[float, float] | None:
-        """Where it is on its map: position/json while it comes, else robot_state's pose."""
+    def _where(self) -> tuple[float, float, float] | None:
+        """Where it is on its map (position/json while it comes, else robot_state's pose) and how exactly. Without a
+        gps fix where it last had one: the pose then is only a guess from the wheels, it shouldn't move it in a zone"""
         pose = self.mower.position or (self.mower.state or {}).get("pose")
         if not isinstance(pose, dict) or not isinstance(pose.get("x"), (int, float)):
             return None
-        return float(pose["x"]), float(pose.get("y") or 0)
+        accuracy = ((self.mower.state or {}).get("pose") or {}).get("pos_accuracy")
+        if not isinstance(accuracy, (int, float)):
+            accuracy = 0
+        # 999 and more is no fix at all
+        elif accuracy >= 999:
+            return self._here
+        return float(pose["x"]), float(pose.get("y") or 0), round(accuracy, 2)
 
     @property
     def latitude(self) -> float | None:
-        point, datum = self._point(), self.mower.datum
-        return map_to_latlon(datum, *point)[0] if point and datum else None
+        here, datum = self._here, self.mower.datum
+        return map_to_latlon(datum, here[0], here[1])[0] if here and datum else None
 
     @property
     def longitude(self) -> float | None:
-        point, datum = self._point(), self.mower.datum
-        return map_to_latlon(datum, *point)[1] if point and datum else None
+        here, datum = self._here, self.mower.datum
+        return map_to_latlon(datum, here[0], here[1])[1] if here and datum else None
 
     @property
     def location_accuracy(self) -> float:
-        accuracy = ((self.mower.state or {}).get("pose") or {}).get("pos_accuracy")
-        # 999 and more is no fix at all
-        return round(accuracy, 2) if isinstance(accuracy, (int, float)) and accuracy < 999 else 0
+        return self._here[2] if self._here else 0
+
+    async def async_added_to_hass(self) -> None:
+        self._here = self._where()
+        await super().async_added_to_hass()
 
     async def async_will_remove_from_hass(self) -> None:
         if self._later:
@@ -86,8 +97,9 @@ class MowbiteTracker(MowbiteEntity, TrackerEntity):
 
     @callback
     def _update(self) -> None:
+        self._here = self._where()
         available = self.available
-        point = self._point()
+        point = self._here[:2] if self._here else None
         now = time.monotonic()
         if available == self._written_available and point and self._written:
             if math.dist(point, self._written) < MIN_MOVE:
@@ -103,7 +115,7 @@ class MowbiteTracker(MowbiteEntity, TrackerEntity):
     @callback
     def _write_later(self, _now: Any) -> None:
         self._later = None
-        self._write(self.available, self._point(), time.monotonic())
+        self._write(self.available, self._here[:2] if self._here else None, time.monotonic())
 
     @callback
     def _write(self, available: bool, point: tuple[float, float] | None, now: float) -> None:

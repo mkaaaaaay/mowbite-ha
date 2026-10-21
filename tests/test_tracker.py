@@ -60,3 +60,24 @@ async def test_tracker(hass: HomeAssistant, mower: Mower, freezer) -> None:
     await hass.async_block_till_done()
     lat = hass.states.get(TRACKER).attributes["latitude"]
     assert lat - 52.254119661740596 == pytest.approx(20 / 111260, rel=0.01)
+
+    # without a gps fix the pose is only a guess from the wheels: it stays where it last had one
+    lost = {**ROBOT_STATE, "pose": {**ROBOT_STATE["pose"], "pos_accuracy": 999}}
+    send(mower, "robot_state/json", lost)
+    send(mower, "position/json", {"x": 0, "y": 100, "heading": 0, "attributes": {"job_id": "j", "blades": True}})
+    freezer.tick(timedelta(seconds=11))
+    async_fire_time_changed(hass, dt_util.utcnow())
+    await hass.async_block_till_done()
+    state = hass.states.get(TRACKER)
+    assert state.attributes["latitude"] == lat
+    assert state.attributes["gps_accuracy"] == 0.01
+
+    # and moves on with the fix back
+    fixed = {**ROBOT_STATE, "pose": {**ROBOT_STATE["pose"], "pos_accuracy": 0.5}}
+    send(mower, "robot_state/json", fixed)
+    freezer.tick(timedelta(seconds=11))
+    async_fire_time_changed(hass, dt_util.utcnow())
+    await hass.async_block_till_done()
+    state = hass.states.get(TRACKER)
+    assert state.attributes["latitude"] - 52.254119661740596 == pytest.approx(100 / 111260, rel=0.01)
+    assert state.attributes["gps_accuracy"] == 0.5
