@@ -46,7 +46,9 @@ mower's MQTT broker directly, no cloud and no extra add-on.
 - **Map colours and icons from MowBite**: with the address of your MowBite container set, the map uses the
   colours, icons and icon sizes you picked in the app, and its garden style with the pictures picked for each area.
   Without it a card can have the garden style too, the pictures then go by the areas' names (an area called "tree"
-  or "Baum" gets a tree, "table" a table, "parasol" a parasol).
+  or "Baum" gets a tree, "table" a table, "parasol" a parasol). MowBite's decorations, areas that are only a
+  picture (the beds round the lawn the mower never reaches), are drawn like obstacles, the integration leaves them
+  out.
 - **The mower at its real size**: with the mower's sizes known the map draws its outline with the blade, and along
   the track the strip the blade really cut.
 - **What's still to mow**: while mowing, the map shows the rest of the area's plan as a thin dashed line, after a
@@ -56,10 +58,10 @@ mower's MQTT broker directly, no cloud and no extra add-on.
 
 What it reads is what OpenMower publishes on MQTT: `robot_state`, `actions`, `sensors`, `events`,
 `position` and `map`, and over the mower's rpc its plans and event history, asked when something changes (an area
-starts, the mower docks, the map changes), never polled. The track of a job that was already running when Home Assistant started comes from the
-mower's position history (OpenMower 1.3 and newer). An emergency stop is told once it has lasted 10 seconds,
-like MowBite's own notifications do it, and a navigation error only when the mower doesn't head home right
-after it (OpenMower reports one when it's sent home in the middle of a path).
+starts, the mower docks, the map changes), never polled. The track of a job that was already running when Home
+Assistant started comes from the mower's position history (OpenMower 1.3 and newer). An emergency stop is told
+once it has lasted 10 seconds, like MowBite's own notifications do it, and a navigation error only when the mower
+doesn't head home right after it (OpenMower reports one when it's sent home in the middle of a path).
 
 ### Which OpenMower
 
@@ -133,6 +135,8 @@ picked for the areas, the real edges and the mower's outline. With the MowBite a
 its pictures (1.4.0-beta.7 and newer) the card takes them from the mower, so it looks like the MowBite the mower
 runs, else the ones that came with the integration. The mower's pictures run in a sandbox of their own, they can't
 reach Home Assistant.
+
+![The map in the garden style while the mower drives](images/map.png)
 
 The map zooms with the buttons, the mouse wheel or two fingers, and moves when dragged. While the mower drives the
 map follows it like the app's overview: a few metres around the mower, with the mower gliding in the middle.
