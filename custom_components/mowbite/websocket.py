@@ -171,6 +171,8 @@ def snapshot(data: MowbiteData) -> dict[str, Any]:
         # only when the newest state change is this state, older mowers don't record every one (a pause, say)
         "since": last.get("t") if current is not None and last.get("state") == current else None,
         "map_mode": data.map_mode,
+        # MowBite's own battery level while it has one, the card takes it instead of OpenMower's percentage
+        "battery_level": data.status.battery_level,
         "mower_sizes": data.mower_sizes,
         "planner_sizes": planner_sizes(data.planning.settings),
         # where the mower is in the plan of the area, for drawing what's still to mow

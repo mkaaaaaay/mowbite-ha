@@ -260,6 +260,8 @@ function artOps(art) {
         const clips = [];
         for (const a of areas) {
           const type = a.properties?.type;
+          // these pictures don't know pins, they'd draw one as big as its 10 cm square
+          if (isPin(a)) continue;
           if (type === 'mow') {
             out.fills[a.id] = a.properties.mowable === false ? 'meadow' : `lawn${angles.length}`;
             angles.push(a.properties.angle ?? art.autoMowAngle(a.outline));
@@ -389,13 +391,24 @@ function cleanArt(op, result) {
     for (const key of ['things', 'over']) for (const [id, svg] of Object.entries(out[key] ?? {})) out[key][id] = cleanSvg(svg);
     for (const [id, fill] of Object.entries(out.fills ?? {})) if (!/^[\w-]+$/.test(fill)) delete out.fills[id];
     for (const [key, d] of Object.entries(out.edges ?? {})) if (typeof d !== 'string' || !/^[MLHVZAC0-9.,eE\s-]*$/i.test(d)) out.edges[key] = '';
-    out.covers = (out.covers ?? []).filter((c) => ['cx', 'cy', 'r'].every((k) => Number.isFinite(c?.[k])));
+    out.covers = cleanCovers(out.covers);
   }
   if (op === 'life') {
     for (const key of ['defs', 'lawn', 'things', 'stones', 'sky', 'canopies']) out[key] = cleanSvg(out[key]);
-    out.covers = (out.covers ?? []).filter((c) => ['cx', 'cy', 'r'].every((k) => Number.isFinite(c?.[k])));
+    out.covers = cleanCovers(out.covers);
   }
   return out;
+}
+
+// where the garden's things over the mower hide it: circles {cx, cy, r}, or in a thing's own shape the turned corners
+// of a rectangle (pts, the outdoor stairs or the mower's garage), numbers only
+function cleanCovers(covers) {
+  return (Array.isArray(covers) ? covers : [])
+    .filter((c) => ['cx', 'cy', 'r'].every((k) => Number.isFinite(c?.[k])))
+    .map((c) => {
+      const pts = Array.isArray(c.pts) && c.pts.length >= 3 && c.pts.every((p) => Number.isFinite(p?.[0]) && Number.isFinite(p?.[1]));
+      return {cx: c.cx, cy: c.cy, r: c.r, ...(pts ? {pts: c.pts.map((p) => [p[0], p[1]])} : {})};
+    });
 }
 
 const SVG_ALLOWED = new Set(
@@ -454,6 +467,26 @@ function artFor(card) {
       .catch(() => {});
   }
   return mowerArt.get(entity);
+}
+
+// a picture set by itself in MowBite (a pin): a decoration of a 10 cm square along the map's axes, standing in its
+// middle. an older OpenMower drops the pin field when it saves, the square still says it (MowBite's isPin)
+const PIN_SIDE = 0.1;
+function isPin(a) {
+  const p = a?.properties ?? {};
+  if (p.type !== 'decor') return false;
+  if (p.pin === true) return true;
+  const o = a.outline ?? [];
+  if (o.length !== 4) return false;
+  const xs = o.map((q) => q.x);
+  const ys = o.map((q) => q.y);
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  const near = (u, v) => Math.abs(u - v) < 1e-3;
+  return (
+    near(x1 - x0, PIN_SIDE) &&
+    near(y1 - y0, PIN_SIDE) &&
+    o.every((q) => (near(q.x, x0) || near(q.x, x1)) && (near(q.y, y0) || near(q.y, y1)))
+  );
 }
 
 // half the mower's length, m, when the app draws it at its real size
@@ -1249,7 +1282,8 @@ class MowbiteMap {
         const long = life?.long && p.type === 'mow' && p.active !== false && p.mowable !== false;
         const name = long ? 'long' : fills[area.id];
         const fill = garden && name ? ` style="fill:url(#${uid}${name});fill-opacity:1"` : '';
-        let out = `<polygon class="${cls}" points="${(area.outline ?? []).map(app).join(' ')}"${fill}/>`;
+        // a pin is only its picture, its square would leave a speck
+        let out = isPin(area) ? '' : `<polygon class="${cls}" points="${(area.outline ?? []).map(app).join(' ')}"${fill}/>`;
         if (garden && !life && things[area.id]) out += things[area.id];
         return out;
       });
@@ -1270,10 +1304,17 @@ class MowbiteMap {
       const over = life ? (life.canopies ?? '') : garden ? Object.values(art?.over ?? {}).join('') : '';
       this.overLayer.innerHTML = over ? `<g transform="${toMap}">${over}</g>` : '';
       const covers = garden ? ((life ? life.covers : art?.covers) ?? []) : [];
-      this.covers = covers.map((c) => ({x: minX + (c.cx - padX) / m, y: -(minY + (400 - c.cy - padY) / m), r: c.r / m}));
+      const inMap = (x, y) => ({x: minX + (x - padX) / m, y: -(minY + (400 - y - padY) / m)});
+      this.covers = covers.map((c) => ({...inMap(c.cx, c.cy), r: c.r / m, pts: c.pts?.map(([x, y]) => inMap(x, y))}));
       this.underLayer.innerHTML = this.covers.length
         ? `<defs><mask id="${uid}under" maskUnits="userSpaceOnUse" x="-10000" y="-10000" width="20000" height="20000">` +
-          this.covers.map((c) => `<circle cx="${c.x}" cy="${c.y}" r="${c.r}" fill="#fff"/>`).join('') +
+          this.covers
+            .map((c) =>
+              c.pts
+                ? `<polygon points="${c.pts.map((p) => `${p.x},${p.y}`).join(' ')}" fill="#fff"/>`
+                : `<circle cx="${c.x}" cy="${c.y}" r="${c.r}" fill="#fff"/>`,
+            )
+            .join('') +
           `</mask></defs><g mask="url(#${uid}under)" class="mowerUnder"><polygon class="mowerUnderBody"/></g>`
         : '';
       this.drawMower();
@@ -2736,7 +2777,8 @@ class MowbiteCard extends HTMLElement {
     const driving = DRIVING.has(current);
     const charger = !!state.is_charging || Number(sensors.om_v_charge) > 20;
     const docked = current === 'IDLE' && charger;
-    const battery = Math.round((state.battery_percentage ?? 0) * 100);
+    // MowBite's own battery level while it has one (it stays put when the mower sets off), else OpenMower's
+    const battery = data.battery_level ?? Math.round((state.battery_percentage ?? 0) * 100);
     const chargeState = sensors.om_charge_state;
     const charging = docked && chargeState !== 'Done';
     const emergency = !!state.emergency;

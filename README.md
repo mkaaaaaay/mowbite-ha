@@ -12,7 +12,9 @@ mower's MQTT broker directly, no cloud and no extra add-on.
   mower controls work with it. Start goes on where a paused mow stopped.
 - **Sensors**: battery, state, GPS quality and accuracy, battery voltage, mow motor temperature, and more that
   are off by default (charge voltage and current, motor controller temperatures, mow motor current and speed).
-  Emergency stop, charging and rain as binary sensors.
+  Emergency stop, charging and rain as binary sensors. With the MowBite address set and a MowBite that works out
+  its own battery level, the battery is that one: it stays put when the mower sets off (OpenMower's drops by a
+  fifth from the voltage alone) and is at 0 % where OpenMower sends the mower home.
 - **Where the mower is**: a GPS tracker (`device_tracker`) from its map position and the GPS datum, for zones in
   automations ("when the mower enters the front garden") and the Home Assistant map. It updates at most every 10 s
   while the mower moves.
@@ -47,8 +49,8 @@ mower's MQTT broker directly, no cloud and no extra add-on.
   colours, icons and icon sizes you picked in the app, and its garden style with the pictures picked for each area.
   Without it a card can have the garden style too, the pictures then go by the areas' names (an area called "tree"
   or "Baum" gets a tree, "table" a table, "parasol" a parasol). MowBite's decorations, areas that are only a
-  picture (the beds round the lawn the mower never reaches), are drawn like obstacles, the integration leaves them
-  out.
+  picture (the beds round the lawn the mower never reaches), are drawn like obstacles, and pictures set by
+  themselves (a grill, a heater) where they stand. The integration leaves both out.
 - **The mower at its real size**: with the mower's sizes known the map draws its outline with the blade, and along
   the track the strip the blade really cut.
 - **What's still to mow**: while mowing, the map shows the rest of the area's plan as a thin dashed line, after a

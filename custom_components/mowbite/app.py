@@ -117,6 +117,12 @@ SYSTEM_PATH = "/cgi-bin/system"
 SCHEDULE_PATH = "/cgi-bin/schedule"
 SCHEDULE_LOG_PATH = "/cgi-bin/schedule?log"
 BATTERY_PATH = "/cgi-bin/battery"
+# MowBite's own battery level (containers of level 4 on): it stays put when the mower sets off, where OpenMower's
+# percentage (a line through the voltage) drops, and 0 % is where OpenMower sends it home. asked every refresh
+BATTERY_LEVEL_PATH = "/cgi-bin/battery?level"
+BATTERY_LEVEL_FROM = 4
+# good for this long after MowBite worked it out (s)
+BATTERY_LEVEL_FRESH = 120
 # the map's pictures, the app's own mowers, docks and garden (MowBite 1.4 and newer), and how big they may be
 ART_PATH = "/mowbite-art.js"
 ART_MAX = 4_000_000
@@ -196,10 +202,23 @@ def parse_battery(text: str, now: float) -> dict[str, Any]:
     return out
 
 
+def parse_battery_level(text: str) -> int | None:
+    """MowBite's battery level from "<now> <t> <pct> <how>": a whole percentage worked out at most BATTERY_LEVEL_FRESH
+    before, None without one ("<now> " none yet, "<now> <t> - off" a mower MowBite doesn't work it out for)"""
+    words = text.split()
+    if len(words) < 3 or not words[2].isdigit():
+        return None
+    now, t = _number(words[0]), _number(words[1])
+    if now is None or t is None or now - t > BATTERY_LEVEL_FRESH:
+        return None
+    level = int(words[2])
+    return level if level <= 100 else None
+
+
 # what the card may read from the app for its dashboard, the way the app's own pages ask it: GET only, these paths
 APP_READ = re.compile(
     r"^/(version\.json"
-    r"|cgi-bin/(system|schedule|schedule\?log|stats|battery|version"
+    r"|cgi-bin/(system|schedule|schedule\?log|stats|battery|battery\?level|version"
     r"|roslog\?(oldest|t=\d+&before=\d+&after=\d+)"
     r"|gpslog\?cells=\d+))$"
 )
@@ -230,6 +249,9 @@ class AppStatus:
         self.art_api: int | None = None
         self._art: tuple[int, str] | None = None
         self._version_read = 0
+        # the container's level (version.json), and MowBite's battery level while it has one
+        self.level: int | None = None
+        self.battery_level: int | None = None
         self.system: dict[str, Any] | None = None
         self.schedule: dict[str, Any] | None = None
         self.schedule_log: dict[str, Any] | None = None
@@ -276,10 +298,7 @@ class AppStatus:
             except ValueError:
                 info = None
             if isinstance(info, dict) and isinstance(info.get("version"), str):
-                self.version = info["version"]
-                self._version_read += 1
-                art = info.get("art")
-                self.art_api = art if isinstance(art, int) and not isinstance(art, bool) else None
+                self._take_version(info)
         if self.art_api is None or self.version is None:
             return None
         if self._art is None or self._art[0] != self._version_read:
@@ -288,6 +307,14 @@ class AppStatus:
                 return None
             self._art = (self._version_read, text)
         return self.art_api, self._art[1]
+
+    def _take_version(self, info: dict[str, Any]) -> None:
+        """What version.json says: the version, the pictures' interface and the container's level."""
+        self.version = info["version"]
+        self._version_read += 1
+        art, level = info.get("art"), info.get("level")
+        self.art_api = art if isinstance(art, int) and not isinstance(art, bool) else None
+        self.level = level if isinstance(level, int) and not isinstance(level, bool) else None
 
     async def async_refresh(self) -> None:
         found: list[str] = []
@@ -298,12 +325,8 @@ class AppStatus:
                 info = json.loads(text)
             except ValueError:
                 info = None
-            version = info.get("version") if isinstance(info, dict) else None
-            if isinstance(version, str):
-                self.version = version
-                self._version_read += 1
-                art = info.get("art")
-                self.art_api = art if isinstance(art, int) and not isinstance(art, bool) else None
+            if isinstance(info, dict) and isinstance(info.get("version"), str):
+                self._take_version(info)
                 found.append("version")
         system = parse_system(text) if (text := await self._get(SYSTEM_PATH)) is not None else {}
         # the computer's values are gone with it, the others keep what they said last
@@ -317,6 +340,10 @@ class AppStatus:
             if (text := await self._get(SCHEDULE_LOG_PATH)) is not None:
                 self.schedule_log = parse_schedule_log(text)
                 found.append("schedule_log")
+        level = None
+        if (self.level or 0) >= BATTERY_LEVEL_FROM and (text := await self._get(BATTERY_LEVEL_PATH)) is not None:
+            level = parse_battery_level(text)
+        self.battery_level = level
         if n % BATTERY_EVERY == 0 and (text := await self._get(BATTERY_PATH)) is not None:
             battery = parse_battery(text, time.time())
             if battery["blade_minutes"] is not None:

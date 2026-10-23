@@ -31,7 +31,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import dt as dt_util
 
 from . import MowbiteConfigEntry, MowbiteData
-from .app import SKIP_REASONS
+from .app import SKIP_REASONS, AppStatus
 from .entity import MowbiteEntity, async_add_when_there
 from .features import APP, EVENTS, MAP, RPC
 from .mower import KEY_STATE, Mower
@@ -67,6 +67,8 @@ class MowbiteSensorDescription(SensorEntityDescription):
     sensor_id: str | None = None
     # these come about once a second, a value every few seconds is plenty for a history
     min_interval: float = 0
+    # the app's own value first while it has one, value_fn's without it
+    app_fn: Callable[[AppStatus], Any] | None = None
 
 
 STATE_SENSORS = (
@@ -76,6 +78,7 @@ STATE_SENSORS = (
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=_percent("battery_percentage"),
+        app_fn=lambda status: status.battery_level,
     ),
     MowbiteSensorDescription(
         key="state",
@@ -476,12 +479,18 @@ class MowbiteSensor(MowbiteEntity, SensorEntity):
     def __init__(self, entry: MowbiteConfigEntry, description: MowbiteSensorDescription) -> None:
         super().__init__(entry, description.key)
         self.entity_description = description
+        self._status = entry.runtime_data.status
         if description.sensor_id:
             self._listen = (f"sensor:{description.sensor_id}",)
         else:
             self._listen = (KEY_STATE,)
         self._written_at = 0.0
         self._written_available: bool | None = None
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if self.entity_description.app_fn:
+            self.async_on_remove(self._status.add_listener(self.async_write_ha_state))
 
     @property
     def available(self) -> bool:
@@ -491,6 +500,8 @@ class MowbiteSensor(MowbiteEntity, SensorEntity):
     @property
     def native_value(self) -> Any:
         description = self.entity_description
+        if description.app_fn and (value := description.app_fn(self._status)) is not None:
+            return value
         if description.value_fn:
             return description.value_fn(self.mower)
         value = self.mower.sensors.get(description.sensor_id or "")

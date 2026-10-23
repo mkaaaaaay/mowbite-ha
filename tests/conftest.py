@@ -94,6 +94,7 @@ APP_STATUS_PATHS = (
     "/cgi-bin/schedule?log",
     "/cgi-bin/schedule",
     "/cgi-bin/battery",
+    "/cgi-bin/battery?level",
 )
 
 

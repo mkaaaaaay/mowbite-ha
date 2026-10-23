@@ -10,13 +10,20 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
+from pytest_homeassistant_custom_component.typing import WebSocketGenerator
 
 from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
-from custom_components.mowbite.app import parse_battery, parse_schedule, parse_schedule_log, parse_system
+from custom_components.mowbite.app import (
+    parse_battery,
+    parse_battery_level,
+    parse_schedule,
+    parse_schedule_log,
+    parse_system,
+)
 from custom_components.mowbite.const import CONF_APP_URL
 from custom_components.mowbite.mower import Mower, RpcError
 from custom_components.mowbite.planning import lawn_area, plan_progress, trim_plan
@@ -188,6 +195,17 @@ def test_app_status_texts() -> None:
     )
     # the longest of the last 30 days, the 70 minutes are older
     assert battery == {"blade_minutes": 60.8, "run_end": 3000100, "low_voltage": 26.71}
+
+
+def test_parse_battery_level() -> None:
+    assert parse_battery_level("1000 950 64 out\n") == 64
+    assert parse_battery_level("1000 880 100 full") == 100
+    # too old, none yet, a mower MowBite doesn't work it out for, not a whole percentage
+    assert parse_battery_level("1000 870 64 out") is None
+    assert parse_battery_level("1000 ") is None
+    assert parse_battery_level("1000 950 - off") is None
+    assert parse_battery_level("1000 950 64.5 out") is None
+    assert parse_battery_level("") is None
 
 
 async def setup_mower(hass: HomeAssistant, entry: MockConfigEntry, rpc: FakeRpc) -> Mower:
@@ -399,6 +417,46 @@ async def test_app_status(
     assert hass.states.get("sensor.openmower_last_skipped_start").state == "rain"
     # the battery's log didn't answer: no sensor for it
     assert hass.states.get("sensor.openmower_longest_blade_time_per_charge") is None
+    # a container below level 4 isn't asked for MowBite's battery level
+    assert not any(str(call[1]).endswith("battery?level") for call in aioclient_mock.mock_calls)
+
+
+async def test_mowbites_battery_level(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    aioclient_mock: AiohttpClientMocker,
+    entry: MockConfigEntry,
+    no_connection: None,
+) -> None:
+    """MowBite's own level while it has one, it stays put when the mower sets off where OpenMower's drops."""
+    url = "http://openmower:8082"
+    now = dt_util.utcnow().timestamp()
+    aioclient_mock.get(url + "/cgi-bin/settings", json={})
+    app_status(
+        aioclient_mock,
+        url,
+        {
+            "/version.json": '{"version": "1.5.0", "level": 4}',
+            "/cgi-bin/battery?level": f"{now:.0f} {now - 30:.0f} 97 out\n",
+        },
+    )
+    entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(entry, options={CONF_APP_URL: url})
+    mower = await setup_mower(hass, entry, FakeRpc({}))
+    send(mower, "robot_state/json", {**ROBOT_STATE, "battery_percentage": 0.81})
+    await hass.async_block_till_done()
+    assert hass.states.get("sensor.openmower_battery").state == "97"
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id({"type": "mowbite/subscribe", "entity_id": "lawn_mower.openmower"})
+    assert (await client.receive_json())["success"]
+    assert (await client.receive_json())["event"]["battery_level"] == 97
+
+    # without one OpenMower's percentage again
+    status = entry.runtime_data.status
+    status.battery_level = None
+    send(mower, "robot_state/json", {**ROBOT_STATE, "battery_percentage": 0.80})
+    await hass.async_block_till_done()
+    assert hass.states.get("sensor.openmower_battery").state == "80"
 
 
 async def test_slic3r_mode_asks_mowing_plan(hass: HomeAssistant, entry: MockConfigEntry, no_connection: None) -> None:
