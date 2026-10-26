@@ -182,10 +182,8 @@ def test_app_status_texts() -> None:
         "remote 0\nmem_total 4000\nmem_available 1000\nload 0.85 0.54 0.55\nuptime 3600\ncpu_temp 66.7\n"
     )
     assert system["cpu_temp"] == 66.7 and system["uptime"] == 3600 and system["load"] == [0.85, 0.54, 0.55]
-    assert parse_schedule("enabled 1\nskiprain 0\nplan 1,3,5 10:00\nplan 6 09:00 a,b\n") == {
-        "enabled": True,
-        "plans": 2,
-    }
+    schedule = parse_schedule("enabled 1\nskiprain 0\nplan 1,3,5 10:00\nplan 6 09:00 a,b\n")
+    assert schedule["enabled"] is True and schedule["plans"] == 2
     log = parse_schedule_log("100 started 100\n200 skipped_area x\n300 skip_rain\n400 started 80\n")
     assert log == {"started": 400, "skipped": 300, "skip_reason": "rain"}
     battery = parse_battery(

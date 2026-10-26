@@ -51,6 +51,12 @@
       },
       "schedule": {
         "name": "Schedule"
+      },
+      "blade_change_due": {
+        "name": "Blade change due"
+      },
+      "cleaning_due": {
+        "name": "Cleaning due"
       }
     },
     "button": {
@@ -316,6 +322,36 @@
             "name": "Places"
           }
         }
+      },
+      "wifi_signal": {
+        "name": "Wi-Fi signal"
+      },
+      "next_start": {
+        "name": "Next scheduled start"
+      },
+      "blade_time_total": {
+        "name": "Blade time total"
+      },
+      "mowing_distance_total": {
+        "name": "Mowing distance total"
+      },
+      "distance_total": {
+        "name": "Distance total"
+      },
+      "runs_total": {
+        "name": "Mowing runs total"
+      },
+      "blade_time_today": {
+        "name": "Blade time today"
+      },
+      "runs_today": {
+        "name": "Mowing runs today"
+      },
+      "blade_change_in": {
+        "name": "Blade change in"
+      },
+      "cleaning_in": {
+        "name": "Cleaning in"
       }
     },
     "switch": {
@@ -330,6 +366,11 @@
       },
       "planner_mop_up": {
         "name": "Mop up"
+      }
+    },
+    "calendar": {
+      "schedule": {
+        "name": "Mowing schedule"
       }
     }
   },
@@ -396,6 +437,12 @@
         "yf_nx": "YardForce NX60 / NX80 / NX100",
         "custom": "Own sizes"
       }
+    }
+  },
+  "issues": {
+    "app_unreachable": {
+      "title": "MowBite doesn't answer for {name}",
+      "description": "Home Assistant can't reach the MowBite app at {url} for {name}, although the mower answers. Without it the card misses the app's look, the Wi-Fi, the schedule and more.\n\nCheck the address under Settings, Devices & services, MowBite for OpenMower, Configure. MowBite usually runs on the mower on port 8082, for example http://openmower:8082."
     }
   }
 }

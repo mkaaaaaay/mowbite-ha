@@ -36,6 +36,11 @@ class Features:
         if isinstance(stored, list):
             self._have = {feature for feature in stored if isinstance(feature, str)}
 
+    @property
+    def seen(self) -> list[str]:
+        """Every feature seen so far."""
+        return sorted(self._have)
+
     def has(self, need: str | Iterable[str]) -> bool:
         """One feature, or any of several."""
         if isinstance(need, str):

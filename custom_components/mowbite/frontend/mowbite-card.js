@@ -294,9 +294,105 @@ function artOps(art) {
   };
 }
 
+// a quick hash of a text (cyrb53), for telling inputs apart
+function hashText(text) {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 2654435761);
+    h2 = Math.imul(h2 ^ c, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+
+// The garden as the pictures worked it out, kept so it's there at once: a garden takes a weak tablet seconds, and a
+// card works it out again every few minutes and on every page load though the map rarely changes. kept in memory
+// for the page (two cards of a mower work it out once) and in the browser (IndexedDB) for the next load, the newest
+// few only. the pictures are asked with GARDEN_UID for the ids of their gradients and clips, it becomes each map's own
+const GARDEN_UID = 'mbGardenUid';
+const GARDEN_KEEP = 4;
+// how long the map waits for more changes before it works out the garden (ms)
+const GARDEN_SETTLE = 300;
+const gardenMemo = new Map();
+let gardenDb;
+
+function swapUid(value, uid) {
+  if (typeof value === 'string') return value.includes(GARDEN_UID) ? value.split(GARDEN_UID).join(uid) : value;
+  if (Array.isArray(value)) return value.map((v) => swapUid(v, uid));
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, swapUid(v, uid)]));
+  return value;
+}
+
+function gardenStore() {
+  gardenDb ??= new Promise((resolve) => {
+    try {
+      const open = indexedDB.open('mowbite-card', 1);
+      open.onupgradeneeded = () => open.result.createObjectStore('garden', {keyPath: 'key'});
+      open.onsuccess = () => resolve(open.result);
+      open.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+  return gardenDb;
+}
+
+async function gardenGet(key) {
+  const db = await gardenStore();
+  if (!db) return null;
+  return new Promise((resolve) => {
+    try {
+      const get = db.transaction('garden').objectStore('garden').get(key);
+      get.onsuccess = () => resolve(get.result?.value ?? null);
+      get.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+async function gardenPut(key, value) {
+  const db = await gardenStore();
+  if (!db) return;
+  try {
+    const store = db.transaction('garden', 'readwrite').objectStore('garden');
+    store.put({key, value, t: Date.now()});
+    // only the newest few
+    const all = store.getAll();
+    all.onsuccess = () => {
+      for (const old of all.result.sort((a, b) => b.t - a.t).slice(GARDEN_KEEP)) store.delete(old.key);
+    };
+  } catch {
+    // full or not allowed: worked out again next time
+  }
+}
+
+// the garden's areas for these pictures and this input: from memory, from the browser, or worked out and kept
+function gardenAreas(art, input) {
+  const key = `areas:${art.id}:${hashText(JSON.stringify(input))}`;
+  if (!gardenMemo.has(key)) {
+    const work = gardenGet(key).then(async (kept) => {
+      if (kept) return kept;
+      const areas = await art.call('areas', input);
+      void gardenPut(key, areas);
+      return areas;
+    });
+    // a failed one is asked again
+    work.catch(() => gardenMemo.delete(key));
+    gardenMemo.set(key, work);
+    if (gardenMemo.size > GARDEN_KEEP * 2) gardenMemo.delete(gardenMemo.keys().next().value);
+  }
+  return {key, areas: gardenMemo.get(key)};
+}
+
 // the pictures that came with the integration, loaded next to the card with the same version
 class BundledArt {
   constructor() {
+    // which pictures they are, for the garden's store: the integration's version
+    this.id = `bundled:${new URL(import.meta.url).search}`;
     this.ops = import(new URL('mowbite-art.js' + new URL(import.meta.url).search, import.meta.url).href)
       .then((module) => artOps(module))
       .catch((err) => {
@@ -318,6 +414,7 @@ const bundledArt = new BundledArt();
 // login, it only answers with plain data and svg text, and that is cleaned before it goes into the card
 class SandboxArt {
   constructor(code) {
+    this.id = `own:${hashText(code)}`;
     this.pending = new Map();
     this.next = 1;
     this.frame = document.createElement('iframe');
@@ -446,26 +543,37 @@ function cleanSvg(text) {
 // per mower: the pictures it draws with, the mower's own once its MowBite serves pictures this card knows (ART_API 1,
 // 2 with the garden's life), else the ones that came with the integration
 const ART_APIS = [1, 2, 3];
+// how long a card waits for the mower's own pictures before it draws with the integration's (ms)
+const ART_WAIT = 8000;
 const mowerArt = new Map();
 function artFor(card) {
   const entity = card._config.entity;
   if (!mowerArt.has(entity)) {
-    const choice = {art: bundledArt, listeners: new Set()};
+    // none until the mower answered, so a garden isn't worked out once with the integration's pictures and then again
+    // with the mower's. the integration's when it has none, or after ART_WAIT without an answer
+    const choice = {art: null, listeners: new Set()};
     mowerArt.set(entity, choice);
+    const use = (art) => {
+      if (choice.art === art) return;
+      choice.art = art;
+      for (const listener of choice.listeners) listener(art);
+    };
+    const wait = setTimeout(() => choice.art || use(bundledArt), ART_WAIT);
     card._hass
       .callWS({type: 'mowbite/art', entity_id: entity})
       .then(async (answer) => {
-        if (!answer?.code || !ART_APIS.includes(answer.api)) return;
+        if (!answer?.code || !ART_APIS.includes(answer.api)) return null;
         const own = new SandboxArt(answer.code);
         const api = await own.api.catch(() => null);
-        if (!ART_APIS.includes(api)) {
-          own.destroy();
-          return;
-        }
-        choice.art = own;
-        for (const listener of choice.listeners) listener(own);
+        if (ART_APIS.includes(api)) return own;
+        own.destroy();
+        return null;
       })
-      .catch(() => {});
+      .catch(() => null)
+      .then((own) => {
+        clearTimeout(wait);
+        use(own ?? choice.art ?? bundledArt);
+      });
   }
   return mowerArt.get(entity);
 }
@@ -676,6 +784,15 @@ const MAP_STYLE = `
   .garden .realGrass {
     fill: #4e8d3e;
     fill-opacity: 1;
+  }
+
+  /* the garden on its way: only its outlines, faintly */
+  .svg.quiet .areas polygon {
+    fill: none;
+    stroke: var(--foreground);
+    stroke-opacity: 0.18;
+    stroke-width: 1;
+    stroke-dasharray: none;
   }
 
   /* the garden style's lines in the colors of a garden like in the app: the outlines soft and dark, the plan and the
@@ -1171,6 +1288,7 @@ class MowbiteMap {
 
   destroy() {
     this.destroyed = true;
+    clearTimeout(this.gardenTimer);
     this.resize.disconnect();
     cancelAnimationFrame(this.frame);
     this.frame = 0;
@@ -1270,7 +1388,9 @@ class MowbiteMap {
     const toMap = `translate(${minX - padX / m} ${-minY - (400 - padY) / m}) scale(${1 / m})`;
     const garden = this.look.style === 'garden';
     const uid = this.uid;
-    const draw = (art) => {
+    // quiet: the garden's still being worked out, only its outlines faintly, not the plain map that looks like another
+    const draw = (art, quiet = false) => {
+      this.svg.classList.toggle('quiet', quiet);
       const fills = art?.fills ?? {};
       const things = art?.things ?? {};
       // with the garden's life: its long grass on the active lawns, its things (with their shadows) instead of the
@@ -1330,24 +1450,50 @@ class MowbiteMap {
         this.drawSwath();
       }
     };
-    // the plain areas right away, the garden and the real edges once the pictures worked them out
+    // the plain areas right away (only faintly while a garden is on its way), the garden and the real edges once the
+    // pictures worked them out
     const turn = ++this.areasDrawn;
-    if (!this.areas.firstChild) draw(null);
-    if (!this.art || (!garden && !this.body)) return draw(null);
+    const waiting = garden && !this.gardenDrawn;
+    if (!this.areas.firstChild || (waiting && !this.svg.classList.contains('quiet'))) draw(null, waiting);
+    if (!this.art) return garden ? undefined : draw(null);
+    if (!garden && !this.body) return draw(null);
     const fit = {minX, minY, m, padX, padY};
     const life = this.lifeInput(garden, fit);
     this.lifeAt = Date.now();
-    Promise.all([
-      this.art.call('areas', {...this.look, areas: map.areas ?? [], body: this.body, garden, uid, fit}),
-      life ? this.art.call('life', life).catch(() => null) : null,
-    ])
-      .then(([art, lifeArt]) => {
-        if (turn !== this.areasDrawn || this.destroyed) return;
-        this.lifeParts = lifeArt?.parts ?? null;
-        this.lifeDark = !!lifeArt?.sky;
-        draw({...art, life: lifeArt});
-      })
-      .catch(() => turn === this.areasDrawn && draw(null));
+    const current = () => turn === this.areasDrawn && !this.destroyed;
+    const show = (art, lifeArt) => {
+      this.lifeParts = lifeArt?.parts ?? null;
+      this.lifeDark = !!lifeArt?.sky;
+      this.gardenDrawn = garden;
+      draw(swapUid({...art, life: lifeArt}, uid));
+    };
+    const input = {...this.look, areas: map.areas ?? [], body: this.body, garden, uid: GARDEN_UID, fit};
+    const pictures = this.art;
+    // the map, the look, the pictures and the mower's body come one after the other when a card starts: worked out
+    // once they're all there
+    clearTimeout(this.gardenTimer);
+    this.gardenTimer = setTimeout(() => this.workGarden(pictures, input, life, current, show, draw), GARDEN_SETTLE);
+  }
+
+  async workGarden(pictures, input, life, current, show, draw) {
+    try {
+      const {key, areas: worked} = gardenAreas(pictures, input);
+      const art = await worked;
+      if (!current()) return;
+      if (!life) return show(art, null);
+      // the garden's life changes with the day and the weather: the last one kept right away on a new page, worked
+      // out anew after it
+      if (!this.gardenDrawn) {
+        const kept = await gardenGet(`life:${key}`);
+        if (kept && current()) show(art, kept);
+      }
+      const lifeArt = await pictures.call('life', {...life, uid: GARDEN_UID}).catch(() => null);
+      if (!current()) return;
+      if (lifeArt) void gardenPut(`life:${key}`, lifeArt);
+      show(art, lifeArt);
+    } catch {
+      if (current()) draw(null);
+    }
   }
 
   // the garden's life's input, null when none of it is on (or the pictures don't know it, they answer null then)
@@ -2393,8 +2539,8 @@ class MowbiteCard extends HTMLElement {
     this._map?.setBody(this._body);
     // sizes that are exactly a model's with a measured outline get that outline, as the app's pictures know them
     // (not the planner's, it has its own outline or none)
-    const key = JSON.stringify([sizes, this._settings?.keepRectangle, !!this._art]);
-    if (!sizes || !this._art || key === this._bodyAsked) return;
+    const key = JSON.stringify([sizes, this._settings?.keepRectangle, !!this._art?.art]);
+    if (!sizes || !this._art?.art || key === this._bodyAsked) return;
     this._bodyAsked = key;
     this._art.art
       .call('body', sizes, this._settings?.keepRectangle)

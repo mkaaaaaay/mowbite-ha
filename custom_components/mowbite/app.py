@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 import json
 import logging
 import re
@@ -75,6 +75,9 @@ class AppSettings:
         self.data: dict[str, Any] = {} if url else WITHOUT_APP
         self.version = 0
         self._listeners: list[Callable[[], None]] = []
+        # since when the app doesn't answer at its address (monotonic), None while it does
+        self.failing_since: float | None = None
+        self._reach_listeners: list[Callable[[], None]] = []
 
     @property
     def url(self) -> str | None:
@@ -83,6 +86,11 @@ class AppSettings:
     def add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
         self._listeners.append(listener)
         return lambda: self._listeners.remove(listener)
+
+    def add_reach_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
+        """Called after every time the app was asked, whether it answered or not."""
+        self._reach_listeners.append(listener)
+        return lambda: self._reach_listeners.remove(listener)
 
     async def async_start(self) -> Callable[[], None]:
         """Reads them now and every few minutes, returns how to stop."""
@@ -102,12 +110,21 @@ class AppSettings:
             data = await async_fetch(self._hass, self._url)
         except CannotReachApp:
             _LOGGER.debug("Can't read the MowBite settings at %s", self._url)
+            if self.failing_since is None:
+                self.failing_since = time.monotonic()
+            self._reached()
             return
+        self.failing_since = None
+        self._reached()
         if data != self.data:
             self.data = data
             self.version += 1
             for listener in list(self._listeners):
                 listener()
+
+    def _reached(self) -> None:
+        for listener in list(self._reach_listeners):
+            listener()
 
 
 # what the app's container tells about the mower's computer, its schedule and its battery, plain text lines of
@@ -117,6 +134,8 @@ SYSTEM_PATH = "/cgi-bin/system"
 SCHEDULE_PATH = "/cgi-bin/schedule"
 SCHEDULE_LOG_PATH = "/cgi-bin/schedule?log"
 BATTERY_PATH = "/cgi-bin/battery"
+# blade time, distances and runs per hour and in total, and the parts' maintenance (docker/stats.cgi)
+STATS_PATH = "/cgi-bin/stats"
 # MowBite's own battery level (containers of level 4 on): it stays put when the mower sets off, where OpenMower's
 # percentage (a line through the voltage) drops, and 0 % is where OpenMower sends it home. asked every refresh
 BATTERY_LEVEL_PATH = "/cgi-bin/battery?level"
@@ -157,14 +176,99 @@ def parse_system(text: str) -> dict[str, Any]:
 
 
 def parse_schedule(text: str) -> dict[str, Any]:
-    """Whether it's on and its plans, the rest of the file isn't shown anywhere."""
-    out: dict[str, Any] = {"enabled": False, "plans": 0}
+    """Whether it's on, how many plans and when they start: "plan <days> <HH:MM> [areas] [end=HH:MM] ...", days 1 =
+    monday .. 7 = sunday, local time, and "pause <YYYY-MM-DD> all|<areas>" (MowBite's schedule.ts)"""
+    out: dict[str, Any] = {"enabled": False, "plans": 0, "starts": [], "pause": None}
     for words in _lines(text):
         if words[0] == "enabled" and len(words) >= 2:
             out["enabled"] = words[1] == "1"
         elif words[0] == "plan":
             out["plans"] += 1
+            if len(words) < 3 or not _hhmm(words[2]):
+                continue
+            days = [int(d) for d in words[1].split(",") if d.isdigit() and 1 <= int(d) <= 7]
+            end = next((w[4:] for w in words[3:] if w.startswith("end=") and _hhmm(w[4:])), None)
+            areas = next((w.split(",") for w in words[3:] if "=" not in w), [])
+            out["starts"].append({"days": days, "time": words[2], "end": end, "areas": areas})
+        elif words[0] == "pause" and len(words) >= 3 and re.fullmatch(r"\d{4}-\d{2}-\d{2}", words[1]):
+            out["pause"] = {"until": words[1], "areas": "all" if words[2] == "all" else words[2].split(",")}
     return out
+
+
+def _hhmm(text: str) -> bool:
+    match = re.fullmatch(r"(\d{1,2}):(\d{2})", text)
+    return match is not None and int(match[1]) < 24 and int(match[2]) < 60
+
+
+def _at(day: date, hhmm: str, tz: Any) -> datetime:
+    hour, minute = (int(x) for x in hhmm.split(":"))
+    return datetime(day.year, day.month, day.day, hour, minute, tzinfo=tz)
+
+
+def schedule_starts(schedule: dict[str, Any] | None, start: datetime, end: datetime) -> list[dict[str, Any]]:
+    """The plans' starts from start to end in start's time zone, oldest first, none while the schedule is off or
+    paused for the whole day: [{"start", "end", "areas"}], end the plan's or None"""
+    if not schedule or not schedule["enabled"]:
+        return []
+    pause = schedule.get("pause")
+    tz = start.tzinfo
+    out = []
+    day = start.date() - timedelta(days=1)
+    while day <= end.date():
+        paused = pause is not None and pause["areas"] == "all" and day.isoformat() <= pause["until"]
+        for plan in [] if paused else schedule["starts"]:
+            if day.isoweekday() not in plan["days"]:
+                continue
+            at = _at(day, plan["time"], tz)
+            until = _at(day, plan["end"], tz) if plan["end"] else None
+            if until is not None and until <= at:
+                until += timedelta(days=1)
+            if start <= (until or at) and at < end:
+                out.append({"start": at, "end": until, "areas": plan["areas"]})
+        day += timedelta(days=1)
+    return sorted(out, key=lambda s: s["start"])
+
+
+def next_start(schedule: dict[str, Any] | None, now: datetime) -> datetime | None:
+    """When the schedule starts the mower next (MowBite's nextStart, without what the scheduler may still leave out:
+    the dark, rain, a low battery)"""
+    later = [s["start"] for s in schedule_starts(schedule, now, now + timedelta(days=8)) if s["start"] > now]
+    return later[0] if later else None
+
+
+def parse_stats(text: str) -> dict[str, Any]:
+    """MowBite's counts (stats.ts): blade seconds, m driven with the blade on (mowed) and off (driven) and runs, in
+    total and per hour ("hour <unix s> ..."), and each part's maintenance ("maint <part> <due blade hours> <blade
+    seconds when done> <done at>")"""
+    out: dict[str, Any] = {"since": None, "total": None, "hours": [], "parts": {}}
+    for words in _lines(text):
+        n = [_number(w) for w in words[1:]]
+        if words[0] == "since" and n and n[0] is not None:
+            out["since"] = n[0]
+        elif words[0] == "total" and len(n) >= 4 and None not in n[:4]:
+            out["total"] = dict(zip(("blade", "mowed", "driven", "runs"), n[:4], strict=True))
+        elif words[0] == "hour" and len(n) >= 5 and None not in n[:5]:
+            out["hours"].append(dict(zip(("t", "blade", "mowed", "driven", "runs"), n[:5], strict=True)))
+        elif words[0] == "maint" and len(words) >= 5 and None not in n[1:4]:
+            out["parts"][words[1]] = {"due_hours": n[1], "base_blade": n[2], "done_at": n[3]}
+    return out
+
+
+def stats_since(stats: dict[str, Any] | None, since: float) -> dict[str, float] | None:
+    """The counts of the hours from since (unix s) on, today's from the local day's start"""
+    if not stats or stats["total"] is None:
+        return None
+    hours = [h for h in stats["hours"] if h["t"] >= since]
+    return {key: sum(h[key] for h in hours) for key in ("blade", "mowed", "driven", "runs")}
+
+
+def part_hours_left(stats: dict[str, Any] | None, part: str) -> float | None:
+    """Blade hours until the part is due again (0 when it is), MowBite's partUse"""
+    p = (stats or {}).get("parts", {}).get(part)
+    if p is None or not stats or stats["total"] is None or not p["due_hours"]:
+        return None
+    used = max(0.0, stats["total"]["blade"] - p["base_blade"]) / 3600
+    return max(0.0, p["due_hours"] - used)
 
 
 def parse_schedule_log(text: str) -> dict[str, Any]:
@@ -256,6 +360,7 @@ class AppStatus:
         self.schedule: dict[str, Any] | None = None
         self.schedule_log: dict[str, Any] | None = None
         self.battery: dict[str, Any] | None = None
+        self.stats: dict[str, Any] | None = None
         self._round = 0
         self._listeners: list[Callable[[], None]] = []
 
@@ -333,6 +438,9 @@ class AppStatus:
         self.system = system if "uptime" in system else None
         if self.system is not None:
             found.append("system")
+            # the wifi only when the app runs on the mower
+            if isinstance(system.get("wifi_signal"), float) and not system.get("remote"):
+                found.append("wifi")
         if n % SCHEDULE_EVERY == 0:
             if (text := await self._get(SCHEDULE_PATH)) is not None and text.strip():
                 self.schedule = parse_schedule(text)
@@ -340,6 +448,10 @@ class AppStatus:
             if (text := await self._get(SCHEDULE_LOG_PATH)) is not None:
                 self.schedule_log = parse_schedule_log(text)
                 found.append("schedule_log")
+            if (text := await self._get(STATS_PATH)) is not None and (stats := parse_stats(text))["total"] is not None:
+                self.stats = stats
+                found.append("stats")
+                found.extend(f"maint_{part}" for part in stats["parts"])
         level = None
         if (self.level or 0) >= BATTERY_LEVEL_FROM and (text := await self._get(BATTERY_LEVEL_PATH)) is not None:
             level = parse_battery_level(text)

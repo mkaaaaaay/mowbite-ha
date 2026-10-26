@@ -51,6 +51,12 @@
       },
       "schedule": {
         "name": "Zeitplan"
+      },
+      "blade_change_due": {
+        "name": "Messerwechsel fällig"
+      },
+      "cleaning_due": {
+        "name": "Reinigung fällig"
       }
     },
     "button": {
@@ -316,6 +322,36 @@
             "name": "Stellen"
           }
         }
+      },
+      "wifi_signal": {
+        "name": "WLAN-Signal"
+      },
+      "next_start": {
+        "name": "Nächster geplanter Start"
+      },
+      "blade_time_total": {
+        "name": "Messerlaufzeit gesamt"
+      },
+      "mowing_distance_total": {
+        "name": "Mähstrecke gesamt"
+      },
+      "distance_total": {
+        "name": "Fahrstrecke gesamt"
+      },
+      "runs_total": {
+        "name": "Mähvorgänge gesamt"
+      },
+      "blade_time_today": {
+        "name": "Messerlaufzeit heute"
+      },
+      "runs_today": {
+        "name": "Mähvorgänge heute"
+      },
+      "blade_change_in": {
+        "name": "Messerwechsel in"
+      },
+      "cleaning_in": {
+        "name": "Reinigung in"
       }
     },
     "switch": {
@@ -330,6 +366,11 @@
       },
       "planner_mop_up": {
         "name": "Nachputzen"
+      }
+    },
+    "calendar": {
+      "schedule": {
+        "name": "Mähplan"
       }
     }
   },
@@ -396,6 +437,12 @@
         "yf_nx": "YardForce NX60 / NX80 / NX100",
         "custom": "Eigene Maße"
       }
+    }
+  },
+  "issues": {
+    "app_unreachable": {
+      "title": "MowBite antwortet nicht ({name})",
+      "description": "Home Assistant erreicht die MowBite-App unter {url} für {name} nicht, obwohl der Mäher antwortet. Ohne sie fehlen der Karte das Aussehen aus der App, das WLAN, der Zeitplan und mehr.\n\nPrüfe die Adresse unter Einstellungen, Geräte & Dienste, MowBite for OpenMower, Konfigurieren. MowBite läuft meist auf dem Mäher auf Port 8082, zum Beispiel http://openmower:8082."
     }
   }
 }

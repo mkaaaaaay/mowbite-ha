@@ -3,6 +3,12 @@
     "binary_sensor": {
       "schedule": {
         "default": "mdi:calendar-clock"
+      },
+      "blade_change_due": {
+        "default": "mdi:saw-blade"
+      },
+      "cleaning_due": {
+        "default": "mdi:broom"
       }
     },
     "button": {
@@ -145,6 +151,33 @@
       },
       "tightest_place": {
         "default": "mdi:arrow-collapse-horizontal"
+      },
+      "next_start": {
+        "default": "mdi:calendar-clock"
+      },
+      "blade_time_total": {
+        "default": "mdi:timer-cog-outline"
+      },
+      "mowing_distance_total": {
+        "default": "mdi:map-marker-distance"
+      },
+      "distance_total": {
+        "default": "mdi:map-marker-distance"
+      },
+      "runs_total": {
+        "default": "mdi:counter"
+      },
+      "blade_time_today": {
+        "default": "mdi:timer-outline"
+      },
+      "runs_today": {
+        "default": "mdi:counter"
+      },
+      "blade_change_in": {
+        "default": "mdi:saw-blade"
+      },
+      "cleaning_in": {
+        "default": "mdi:broom"
       }
     },
     "switch": {
@@ -162,6 +195,11 @@
       },
       "planner_mop_up": {
         "default": "mdi:broom"
+      }
+    },
+    "calendar": {
+      "schedule": {
+        "default": "mdi:calendar-clock"
       }
     }
   }

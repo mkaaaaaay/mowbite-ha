@@ -17,6 +17,7 @@ from homeassistant.components.sensor import (
 from homeassistant.const import (
     PERCENTAGE,
     REVOLUTIONS_PER_MINUTE,
+    SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     EntityCategory,
     UnitOfArea,
     UnitOfElectricCurrent,
@@ -31,7 +32,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import dt as dt_util
 
 from . import MowbiteConfigEntry, MowbiteData
-from .app import SKIP_REASONS, AppStatus
+from .app import SKIP_REASONS, AppStatus, next_start, part_hours_left, stats_since
 from .entity import MowbiteEntity, async_add_when_there
 from .features import APP, EVENTS, MAP, RPC
 from .mower import KEY_STATE, Mower
@@ -226,6 +227,36 @@ def _booted(data: MowbiteData) -> datetime | None:
         return None
     # to the minute, otherwise the state changes on every read
     return (dt_util.utcnow() - timedelta(seconds=uptime)).replace(second=0, microsecond=0)
+
+
+def _wifi(data: MowbiteData) -> float | None:
+    system = data.status.system or {}
+    signal = system.get("wifi_signal")
+    return signal if isinstance(signal, float) and not system.get("remote") else None
+
+
+def _total(key: str, scale: float, digits: int = 1) -> Callable[[MowbiteData], Any]:
+    def value(data: MowbiteData) -> Any:
+        total = (data.status.stats or {}).get("total")
+        return None if total is None else round(sum(total[k] for k in key.split("+")) / scale, digits)
+
+    return value
+
+
+def _today(key: str, scale: float = 1) -> Callable[[MowbiteData], Any]:
+    def value(data: MowbiteData) -> Any:
+        today = stats_since(data.status.stats, dt_util.start_of_local_day().timestamp())
+        return None if today is None else round(today[key] / scale)
+
+    return value
+
+
+def _hours_left(part: str) -> Callable[[MowbiteData], Any]:
+    def value(data: MowbiteData) -> Any:
+        left = part_hours_left(data.status.stats, part)
+        return None if left is None else round(left, 1)
+
+    return value
 
 
 def _leftover_areas(data: MowbiteData) -> dict[str, Any]:
@@ -444,6 +475,127 @@ DATA_SENSORS = (
             "run_end": t.isoformat() if (t := _timestamp((data.status.battery or {}).get("run_end"))) else None,
         },
         feature=APP + "battery",
+        listen=(KEY_STATUS,),
+        needs_mower=False,
+    ),
+    # all of these off at first, switched on by who wants them
+    MowbiteDataSensorDescription(
+        key="wifi_signal",
+        translation_key="wifi_signal",
+        device_class=SensorDeviceClass.SIGNAL_STRENGTH,
+        native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=_wifi,
+        feature=APP + "wifi",
+        listen=(KEY_STATUS,),
+        needs_mower=False,
+    ),
+    MowbiteDataSensorDescription(
+        key="next_start",
+        translation_key="next_start",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        entity_registry_enabled_default=False,
+        value_fn=lambda data: next_start(data.status.schedule, dt_util.now()),
+        feature=APP + "schedule",
+        listen=(KEY_STATUS,),
+        needs_mower=False,
+    ),
+    MowbiteDataSensorDescription(
+        key="blade_time_total",
+        translation_key="blade_time_total",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.HOURS,
+        suggested_display_precision=1,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_registry_enabled_default=False,
+        value_fn=_total("blade", 3600),
+        feature=APP + "stats",
+        listen=(KEY_STATUS,),
+        needs_mower=False,
+    ),
+    MowbiteDataSensorDescription(
+        key="mowing_distance_total",
+        translation_key="mowing_distance_total",
+        device_class=SensorDeviceClass.DISTANCE,
+        native_unit_of_measurement=UnitOfLength.KILOMETERS,
+        suggested_display_precision=1,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_registry_enabled_default=False,
+        value_fn=_total("mowed", 1000, 2),
+        feature=APP + "stats",
+        listen=(KEY_STATUS,),
+        needs_mower=False,
+    ),
+    MowbiteDataSensorDescription(
+        key="distance_total",
+        translation_key="distance_total",
+        device_class=SensorDeviceClass.DISTANCE,
+        native_unit_of_measurement=UnitOfLength.KILOMETERS,
+        suggested_display_precision=1,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_registry_enabled_default=False,
+        value_fn=_total("mowed+driven", 1000, 2),
+        feature=APP + "stats",
+        listen=(KEY_STATUS,),
+        needs_mower=False,
+    ),
+    MowbiteDataSensorDescription(
+        key="runs_total",
+        translation_key="runs_total",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_registry_enabled_default=False,
+        value_fn=_total("runs", 1, 0),
+        feature=APP + "stats",
+        listen=(KEY_STATUS,),
+        needs_mower=False,
+    ),
+    MowbiteDataSensorDescription(
+        key="blade_time_today",
+        translation_key="blade_time_today",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.MINUTES,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_registry_enabled_default=False,
+        value_fn=_today("blade", 60),
+        feature=APP + "stats",
+        listen=(KEY_STATUS,),
+        needs_mower=False,
+    ),
+    MowbiteDataSensorDescription(
+        key="runs_today",
+        translation_key="runs_today",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_registry_enabled_default=False,
+        value_fn=_today("runs"),
+        feature=APP + "stats",
+        listen=(KEY_STATUS,),
+        needs_mower=False,
+    ),
+    MowbiteDataSensorDescription(
+        key="blade_change_in",
+        translation_key="blade_change_in",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.HOURS,
+        suggested_display_precision=1,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_registry_enabled_default=False,
+        value_fn=_hours_left("blade"),
+        feature=APP + "maint_blade",
+        listen=(KEY_STATUS,),
+        needs_mower=False,
+    ),
+    MowbiteDataSensorDescription(
+        key="cleaning_in",
+        translation_key="cleaning_in",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.HOURS,
+        suggested_display_precision=1,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_registry_enabled_default=False,
+        value_fn=_hours_left("clean"),
+        feature=APP + "maint_clean",
         listen=(KEY_STATUS,),
         needs_mower=False,
     ),

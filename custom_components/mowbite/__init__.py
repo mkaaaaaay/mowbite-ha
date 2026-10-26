@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import hashlib
 import logging
 from pathlib import Path
+import time
 
 from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import StaticPathConfig
@@ -15,7 +16,7 @@ from homeassistant.components.lovelace.resources import ResourceStorageCollectio
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT, CONF_USERNAME, Platform
 from homeassistant.core import Event, HomeAssistant, callback
-from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import config_validation as cv, issue_registry as ir
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.util import dt as dt_util
@@ -33,6 +34,7 @@ _LOGGER = logging.getLogger(__name__)
 PLATFORMS = [
     Platform.BINARY_SENSOR,
     Platform.BUTTON,
+    Platform.CALENDAR,
     Platform.DEVICE_TRACKER,
     Platform.EVENT,
     Platform.LAWN_MOWER,
@@ -53,6 +55,8 @@ CARD_FILE = Path(__file__).parent / "frontend" / "mowbite-card.js"
 # the app's pictures and its dashboard logic next to it, loaded by the card with the same version
 ART_FILES = [CARD_FILE.parent / "mowbite-art.js", CARD_FILE.parent / "mowbite-app.js"]
 CARD_PATH = f"{CARD_URL}/{CARD_FILE.name}"
+# the app not answering at its address this long (s) while the mower does: a repair to check the address
+APP_UNREACHABLE_AFTER = 600
 # the notifications' blueprint comes with the integration too (HACS has no blueprints): into Home Assistant's
 # blueprints once, unless one from this repository is there already (imported by hand). Importing it again in Home
 # Assistant updates it
@@ -173,6 +177,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: MowbiteConfigEntry) -> b
             features.add([DATUM])
 
     entry.async_on_unload(mower.add_change_listener(datum))
+
+    issue_id = f"app_unreachable_{entry.entry_id}"
+
+    @callback
+    def app_reach() -> None:
+        # a mower that's off has its MowBite off too, that's no wrong address
+        since = app.failing_since
+        if since is None:
+            ir.async_delete_issue(hass, DOMAIN, issue_id)
+        elif mower.available and time.monotonic() - since >= APP_UNREACHABLE_AFTER:
+            ir.async_create_issue(
+                hass,
+                DOMAIN,
+                issue_id,
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key="app_unreachable",
+                translation_placeholders={"name": entry.title, "url": app.url or ""},
+            )
+
+    entry.async_on_unload(app.add_reach_listener(app_reach))
+    # a changed address or a removed mower starts again without it
+    entry.async_on_unload(lambda: ir.async_delete_issue(hass, DOMAIN, issue_id))
     # the app may be off as well, the map then has the app's default colours until it's there
     entry.async_on_unload(await app.async_start())
     entry.async_on_unload(await status.async_start())

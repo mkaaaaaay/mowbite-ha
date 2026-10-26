@@ -36,6 +36,10 @@ mower's MQTT broker directly, no cloud and no extra add-on.
   - The MowBite version, the mower computer's CPU temperature, free memory and storage, whether the schedule is
     on, its last start and the last start it left out (rain, dark, battery low, ...), and the longest blade time
     on one charge in the last 30 days, which gets shorter as the battery ages (with the MowBite address set)
+  - Off at first, switch them on if you like (with the MowBite address set): the Wi-Fi signal, the next scheduled
+    start, the schedule as a calendar, the blade time, the distance driven with the blade on and in all and the runs,
+    in total and today, and when the blades and the cleaning are due again, as hours left and as a yes/no for
+    reminders
 - **Events** for automations and notifications: all areas done, heading home (with the reason: battery, rain,
   mow motor too hot or sent home), docked, left the dock, docking retry, docking or undocking failed,
   navigation error, mow motor didn't start, GPS lost while mowing, emergency stop and cleared, fully charged,
@@ -147,6 +151,9 @@ reach Home Assistant.
 
 ![The map in the garden style while the mower drives](images/map.png)
 
+The garden the card worked out is kept in the browser, so it's there right away the next time the page opens, and
+worked out again only when the map or the looks change. While it's on its way the map shows only its outlines.
+
 The map zooms with the buttons, the mouse wheel or two fingers, and moves when dragged. While the mower drives the
 map follows it like the app's overview: a few metres around the mower, with the mower gliding in the middle.
 Zooming changes how much is shown around it, dragging the map stops following, the target button starts it
@@ -173,6 +180,11 @@ Android.
   integration only adds it to dashboards Home Assistant keeps.
 - **The mower is unavailable**: check the broker host and port, and the prefix. The integration keeps trying,
   a mower that's off (winter, shed) isn't an error.
+- **"MowBite doesn't answer" under Repairs**: the MowBite address set under Configure didn't answer for 10 minutes
+  while the mower did. MowBite usually runs on the mower on port 8082, for example `http://openmower:8082`.
+- **Asking for help or reporting a bug**: on the integration's page, the three dots, Download diagnostics, and attach
+  the file. It has what the mower and MowBite told the integration, without logins and without where your garden
+  is.
 
 ## Development
 
