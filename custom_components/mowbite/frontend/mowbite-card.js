@@ -26,9 +26,6 @@ const TEMP_ORDER = [
   ['om_right_esc_temp', 'Right ESC'],
 ];
 
-// colder than this is no sensor: OpenMower still sends what the controller works out from an input with nothing on it
-// (unplugged or broken, -81 °C), shown as no sensor so it still stands out
-const TEMP_LOWEST = -40;
 
 // the app's themes (its globals.css), auto follows Home Assistant's dark mode with dark or light
 const THEMES = ['frost', 'dark', 'light', 'aurora', 'sunny', 'openmower'];
@@ -64,7 +61,6 @@ const DE = {
   Rain: 'Regen',
   detected: 'erkannt',
   'Mow motor': 'Mähmotor',
-  'no sensor': 'kein Fühler',
   'Mow controller': 'Mähregler',
   'Left drive controller': 'Fahrregler links',
   'Right drive controller': 'Fahrregler rechts',
@@ -2742,12 +2738,10 @@ class MowbiteCard extends HTMLElement {
       .filter(([id, info]) => info.value_description === 'TEMPERATURE' && Number.isFinite(Number(values[id])))
       .map(([id, info]) => {
         const value = Number(values[id]);
-        const name = TEMP_ORDER.find(([k]) => k === id)?.[1];
-        const label = name ? this._t(name) : info.sensor_name || id;
-        if (value <= TEMP_LOWEST) return {id, label, value: this._t('no sensor'), warn: true};
         const limit =
           info.max_value > 0 ? info.max_value : info.has_critical_high && info.upper_critical_value > 0 ? info.upper_critical_value : 70;
-        return {id, label, value: `${Math.round(value)} °C`, warn: value >= limit};
+        const name = TEMP_ORDER.find(([k]) => k === id)?.[1];
+        return {id, label: name ? this._t(name) : info.sensor_name || id, value: `${Math.round(value)} °C`, warn: value >= limit};
       })
       .sort((a, b) => rank(a.id) - rank(b.id) || a.label.localeCompare(b.label));
   }
