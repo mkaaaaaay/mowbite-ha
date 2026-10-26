@@ -26,8 +26,12 @@ const TEMP_ORDER = [
   ['om_right_esc_temp', 'Right ESC'],
 ];
 
+// colder than this is no sensor: OpenMower still sends what the controller works out from an input with nothing on it
+// (unplugged or broken, -81 °C), shown as no sensor so it still stands out
+const TEMP_LOWEST = -40;
+
 // the app's themes (its globals.css), auto follows Home Assistant's dark mode with dark or light
-const THEMES = ['frost', 'dark', 'light', 'aurora', 'sunny'];
+const THEMES = ['frost', 'dark', 'light', 'aurora', 'sunny', 'openmower'];
 
 const GPS_QUALITY_LABEL = {none: 'no fix', fix: 'RTK fix', float: 'float', poor: 'too inaccurate'};
 
@@ -60,6 +64,7 @@ const DE = {
   Rain: 'Regen',
   detected: 'erkannt',
   'Mow motor': 'Mähmotor',
+  'no sensor': 'kein Fühler',
   'Mow controller': 'Mähregler',
   'Left drive controller': 'Fahrregler links',
   'Right drive controller': 'Fahrregler rechts',
@@ -560,6 +565,11 @@ const MAP_STYLE = `
     fill-opacity: 0.25;
     stroke: var(--c-decor);
     stroke-width: 1;
+  }
+
+  /* a Home Assistant entity in the status (entities:), a tap opens it */
+  .facts > [data-entity] {
+    cursor: pointer;
   }
 
   .inactive {
@@ -2105,6 +2115,7 @@ class MowbiteCard extends HTMLElement {
                 {value: 'frost', label: 'Frosted glass'},
                 {value: 'aurora', label: 'Aurora'},
                 {value: 'sunny', label: 'Sunny'},
+                {value: 'openmower', label: 'OpenMower'},
                 {value: 'dark', label: 'Dark'},
                 {value: 'light', label: 'Light'},
                 {value: 'auto', label: 'Like Home Assistant'},
@@ -2145,6 +2156,25 @@ class MowbiteCard extends HTMLElement {
         {name: 'today', selector: {boolean: {}}},
         {name: 'leftovers', selector: {boolean: {}}},
         {name: 'blur', selector: {boolean: {}}},
+        {name: 'entities', selector: {entity: {multiple: true}}},
+        {
+          name: 'hide',
+          selector: {
+            select: {
+              multiple: true,
+              options: [
+                {value: 'gps', label: 'GPS'},
+                {value: 'speed', label: 'Speed'},
+                {value: 'progress', label: 'Progress'},
+                {value: 'charging', label: 'Charging'},
+                {value: 'battery', label: 'Battery voltage'},
+                {value: 'rain', label: 'Rain'},
+                {value: 'wifi', label: 'Wi-Fi'},
+                {value: 'temperatures', label: 'Temperatures'},
+              ],
+            },
+          },
+        },
       ],
       computeLabel: (schema) =>
         ({
@@ -2157,6 +2187,8 @@ class MowbiteCard extends HTMLElement {
           today: 'Today: what was mowed, the last runs, the next start',
           leftovers: 'Check the last mow for leftovers',
           blur: 'Blur behind the glass (slower on old tablets)',
+          entities: 'More values in the status',
+          hide: 'Leave out of the status',
         })[schema.name],
     };
   }
@@ -2219,7 +2251,11 @@ class MowbiteCard extends HTMLElement {
 
   set hass(hass) {
     const first = !this._hass;
+    // an entity shown in the status changed: drawn again
+    const own = (this._config?.entities ?? []).map((item) => (typeof item === 'string' ? item : item?.entity));
+    const moved = !first && this._built && own.some((id) => id && this._hass.states[id] !== hass.states[id]);
     this._hass = hass;
+    if (moved) this._update();
     this._app?.setLanguage(this._lang);
     this._applyLook();
     if (first) {
@@ -2542,6 +2578,8 @@ class MowbiteCard extends HTMLElement {
     this.shadowRoot.querySelector('.page').addEventListener('click', (ev) => {
       const button = ev.target.closest('button');
       if (button && !button.disabled && button.dataset.button) this._press(button.dataset.button);
+      const fact = ev.target.closest('[data-entity]');
+      if (fact) this.dispatchEvent(new CustomEvent('hass-more-info', {detail: {entityId: fact.dataset.entity}, bubbles: true, composed: true}));
     });
     this._built = true;
     this._map?.destroy();
@@ -2704,12 +2742,32 @@ class MowbiteCard extends HTMLElement {
       .filter(([id, info]) => info.value_description === 'TEMPERATURE' && Number.isFinite(Number(values[id])))
       .map(([id, info]) => {
         const value = Number(values[id]);
+        const name = TEMP_ORDER.find(([k]) => k === id)?.[1];
+        const label = name ? this._t(name) : info.sensor_name || id;
+        if (value <= TEMP_LOWEST) return {id, label, value: this._t('no sensor'), warn: true};
         const limit =
           info.max_value > 0 ? info.max_value : info.has_critical_high && info.upper_critical_value > 0 ? info.upper_critical_value : 70;
-        const name = TEMP_ORDER.find(([k]) => k === id)?.[1];
-        return {id, label: name ? this._t(name) : info.sensor_name || id, value: `${Math.round(value)} °C`, warn: value >= limit};
+        return {id, label, value: `${Math.round(value)} °C`, warn: value >= limit};
       })
       .sort((a, b) => rank(a.id) - rank(b.id) || a.label.localeCompare(b.label));
+  }
+
+  // Home Assistant entities the card shows in the status too (entities:), an entity id or {entity, name}, in Home
+  // Assistant's own words and units. a tap opens the entity
+  _entityFacts() {
+    return (this._config.entities ?? [])
+      .map((item) => (typeof item === 'string' ? {entity: item} : item))
+      .filter((item) => item?.entity && this._hass?.states[item.entity])
+      .map((item) => {
+        const st = this._hass.states[item.entity];
+        const unit = st.attributes.unit_of_measurement;
+        const value = this._hass.formatEntityState?.(st) ?? `${st.state}${unit ? ` ${unit}` : ''}`;
+        // the mower's own entities without the mower's name in front, it's on the card already
+        const mower = this._hass.states[this._config.entity]?.attributes.friendly_name;
+        const name = st.attributes.friendly_name ?? item.entity;
+        const own = mower && name.startsWith(`${mower} `) ? name.slice(mower.length + 1) : name;
+        return {label: item.name ?? own, value, entity: item.entity};
+      });
   }
 
   // two to a row, the wide ones and one left without a partner over the whole row (the app's wholeRow). the first
@@ -2727,7 +2785,8 @@ class MowbiteCard extends HTMLElement {
         const [main, ...rest] = String(f.value).split(' · ');
         const cls = [f.warn ? 'warn' : '', whole[i] ? 'whole' : ''].filter(Boolean).join(' ');
         const value = `<strong>${escape(main)}${rest.length ? `<small> · ${escape(rest.join(' · '))}</small>` : ''}</strong>`;
-        return `<div${cls ? ` class="${cls}"` : ''}><span>${escape(f.label)}</span>${value}${f.extra ? `<span>${escape(f.extra)}</span>` : ''}</div>`;
+        const entity = f.entity ? ` data-entity="${escape(f.entity)}"` : '';
+        return `<div${cls ? ` class="${cls}"` : ''}${entity}><span>${escape(f.label)}</span>${value}${f.extra ? `<span>${escape(f.extra)}</span>` : ''}</div>`;
       })
       .join('');
     el.hidden = !facts.length;
@@ -2851,30 +2910,32 @@ class MowbiteCard extends HTMLElement {
     // standing still the mower switches gps off, "off" there says nothing
     if (driving || gps !== 'none') {
       facts.push({
+        key: 'gps',
         label: 'GPS',
         value: gps === 'none' ? this._t(driving ? 'no fix' : 'off') : `${this._fmt(acc * 100, 1)} cm · ${this._t(GPS_QUALITY_LABEL[gps])}`,
         // only an rtk fix is good while driving
         warn: driving && gps !== 'fix',
       });
     }
-    if (driving) facts.push({label: this._t('Speed'), value: `${this._fmt(this._speed, 2)} m/s`});
+    if (driving) facts.push({key: 'speed', label: this._t('Speed'), value: `${this._fmt(this._speed, 2)} m/s`});
     if (progress?.leftovers) {
-      facts.push({label: this._t('Progress'), value: this._t('leftovers of the last mow'), wide: true});
+      facts.push({key: 'progress', label: this._t('Progress'), value: this._t('leftovers of the last mow'), wide: true});
     } else if (progress) {
       const left = progress.secondsLeft !== null ? ` · ${this._t('{time} left', {time: this._duration(progress.secondsLeft)})}` : '';
-      facts.push({label: this._t('Progress'), value: `${Math.round(progress.fraction * 100)} %${left}`, wide: true});
+      facts.push({key: 'progress', label: this._t('Progress'), value: `${Math.round(progress.fraction * 100)} %${left}`, wide: true});
     }
     if (charging && num('om_charge_current') !== undefined)
-      facts.push({label: this._t('Charging'), value: `${this._fmt(num('om_charge_current'), 1)} A`});
-    if (num('om_v_battery') !== undefined) facts.push({label: this._t('Battery'), value: `${this._fmt(num('om_v_battery'), 1)} V`});
-    if (state.rain_detected) facts.push({label: this._t('Rain'), value: this._t('detected'), warn: true});
+      facts.push({key: 'charging', label: this._t('Charging'), value: `${this._fmt(num('om_charge_current'), 1)} A`});
+    if (num('om_v_battery') !== undefined) facts.push({key: 'battery', label: this._t('Battery'), value: `${this._fmt(num('om_v_battery'), 1)} V`});
+    if (state.rain_detected) facts.push({key: 'rain', label: this._t('Rain'), value: this._t('detected'), warn: true});
     // the app and the correction data for gps come over it
     if (dash?.wifi !== undefined && app) {
       const level = app.coverage.wifiLevel(dash.wifi);
-      facts.push({label: this._t('Wi-Fi'), value: `${dash.wifi} dBm · ${this._t(app.status.WIFI_LEVEL_LABEL[level])}`, warn: level === 'bad'});
+      facts.push({key: 'wifi', label: this._t('Wi-Fi'), value: `${dash.wifi} dBm · ${this._t(app.status.WIFI_LEVEL_LABEL[level])}`, warn: level === 'bad'});
     }
-    this._facts($('.facts.info'), facts);
-    this._facts($('.facts.temps'), this._temperatures(data.sensor_infos ?? {}, sensors));
+    const hide = new Set(this._config.hide ?? []);
+    this._facts($('.facts.info'), [...facts.filter((f) => !hide.has(f.key)), ...this._entityFacts()]);
+    this._facts($('.facts.temps'), hide.has('temperatures') ? [] : this._temperatures(data.sensor_infos ?? {}, sensors));
 
     // the mower still offers start while the emergency stop is active, it has to be reset first
     const off = (name) => !live || !this._has(name) || emergency;

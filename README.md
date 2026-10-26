@@ -123,14 +123,21 @@ map_height: 260    # pixels, leave it out for a square map like in the app
 status: true       # false shows only the map
 today: true        # false leaves out "Today" (what was mowed, the last runs, the next start)
 leftovers: true    # false leaves out checking the last mow for leftovers (with the MowBite Planner)
-theme: frost       # frost (frosted glass), aurora, sunny, dark, light or auto (like Home Assistant)
+theme: frost       # frost (frosted glass), aurora, sunny, openmower, dark, light or auto (like Home Assistant)
 blur: true         # false is lighter for older tablets: no blur, and the map follows the mower in steps
+entities:          # more values in the status, any Home Assistant entity, a tap opens it
+  - sensor.openmower_position_accuracy
+  - entity: sensor.openmower_area_time_left
+    name: Time left
+hide:              # what the status leaves out: gps, speed, progress, charging, battery, rain, wifi, temperatures
+  - temperatures
 ```
 
 The card is MowBite's dashboard: the status with the battery ring, the facts (GPS, speed, progress with the time
-left, Wi-Fi, temperatures), the buttons, the map, and "Today" with what was mowed, the last runs, a start the
-schedule left out, maintenance due and the next start. In the language of your Home Assistant user, German or
-English, with MowBite's own words.
+left, Wi-Fi, temperatures, and the entities you add), the buttons, the map, and "Today" with what was mowed, the
+last runs, a start the schedule left out, maintenance due and the next start. In the language of your Home
+Assistant user, German or English, with MowBite's own words. Like in the app some buttons only show when they're
+of use: "Skip this path" while the mower mows, "Reset emergency" while an emergency stop is on.
 
 It draws the map the way your MowBite does: its colours, the mower and dock icon, the garden style with the pictures
 picked for the areas, the real edges and the mower's outline. With the MowBite address set and a MowBite that serves
