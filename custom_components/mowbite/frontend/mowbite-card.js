@@ -27,6 +27,21 @@ const TEMP_ORDER = [
 ];
 
 
+// the integration's values that only say something while the mower drives, or while it charges: left out of the
+// status otherwise (0 rpm or no gps fix in the dock), by their translation key
+const WHILE_DRIVING = new Set([
+  'current_area',
+  'area_progress',
+  'area_time_left',
+  'job_time_left',
+  'mow_motor_current',
+  'mow_motor_speed',
+  'gps_quality',
+  'position_accuracy',
+  'gps_fix',
+]);
+const WHILE_CHARGING = new Set(['charge_current', 'charge_voltage']);
+
 // the app's themes (its globals.css), auto follows Home Assistant's dark mode with dark or light
 const THEMES = ['frost', 'dark', 'light', 'aurora', 'sunny', 'openmower'];
 
@@ -2813,11 +2828,21 @@ class MowbiteCard extends HTMLElement {
   }
 
   // Home Assistant entities the card shows in the status too (entities:), an entity id or {entity, name}, in Home
-  // Assistant's own words and units. a tap opens the entity
+  // Assistant's own words and units, only while they have a value, the mower's ones that only say something while it
+  // drives or charges only then. a tap opens it
   _entityFacts() {
+    const state = this._data?.state ?? {};
+    const driving = DRIVING.has(state.current_state ?? '');
+    const charging = !!state.is_charging;
+    const meaningful = (id) => {
+      const entry = this._hass.entities?.[id];
+      if (entry?.platform !== 'mowbite') return true;
+      return !(WHILE_DRIVING.has(entry.translation_key) && !driving) && !(WHILE_CHARGING.has(entry.translation_key) && !charging);
+    };
     return (this._config.entities ?? [])
       .map((item) => (typeof item === 'string' ? {entity: item} : item))
       .filter((item) => item?.entity && this._hass?.states[item.entity])
+      .filter((item) => !['unknown', 'unavailable', ''].includes(this._hass.states[item.entity].state) && meaningful(item.entity))
       .map((item) => {
         const st = this._hass.states[item.entity];
         const unit = st.attributes.unit_of_measurement;

@@ -143,7 +143,8 @@ today: true        # false leaves out "Today" (what was mowed, the last runs, th
 leftovers: true    # false leaves out checking the last mow for leftovers (with the MowBite Planner)
 theme: frost       # frost (frosted glass), aurora, sunny, openmower, dark, light or auto (like Home Assistant)
 blur: true         # false is lighter for older tablets: no blur, and the map follows the mower in steps
-entities:          # more values in the status, any Home Assistant entity, a tap opens it
+entities:          # more values in the status, any Home Assistant entity, a tap opens it. shown while it has a
+                   # value, the mower's driving ones (time left, progress, gps) only while it drives
   - sensor.openmower_position_accuracy
   - entity: sensor.openmower_area_time_left
     name: Time left
