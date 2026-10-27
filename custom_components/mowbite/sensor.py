@@ -58,7 +58,8 @@ def _state(mower: Mower) -> str | None:
 
 def _accuracy(mower: Mower) -> float | None:
     accuracy = ((mower.state or {}).get("pose") or {}).get("pos_accuracy")
-    return round(accuracy, 3) if isinstance(accuracy, (int, float)) else None
+    # 999 and more is no fix at all, not an accuracy
+    return round(accuracy, 3) if isinstance(accuracy, (int, float)) and accuracy < 999 else None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -238,7 +239,10 @@ def _wifi(data: MowbiteData) -> float | None:
 def _total(key: str, scale: float, digits: int = 1) -> Callable[[MowbiteData], Any]:
     def value(data: MowbiteData) -> Any:
         total = (data.status.stats or {}).get("total")
-        return None if total is None else round(sum(total[k] for k in key.split("+")) / scale, digits)
+        if total is None:
+            return None
+        value = round(sum(total[k] for k in key.split("+")) / scale, digits)
+        return int(value) if digits == 0 else value
 
     return value
 
@@ -484,6 +488,7 @@ DATA_SENSORS = (
         translation_key="wifi_signal",
         device_class=SensorDeviceClass.SIGNAL_STRENGTH,
         native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+        suggested_display_precision=0,
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
@@ -638,6 +643,7 @@ class MowbiteSensor(MowbiteEntity, SensorEntity):
             self._listen = (KEY_STATE,)
         self._written_at = 0.0
         self._written_available: bool | None = None
+        self._written_value: Any = None
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -665,10 +671,17 @@ class MowbiteSensor(MowbiteEntity, SensorEntity):
     def _update(self) -> None:
         now = time.monotonic()
         available = self.available
-        if available == self._written_available and now - self._written_at < self.entity_description.min_interval:
+        value = self.native_value if available else None
+        # a value that only moves on is written every so often, one that comes or goes right away
+        if (
+            available == self._written_available
+            and None not in (value, self._written_value)
+            and now - self._written_at < self.entity_description.min_interval
+        ):
             return
         self._written_at = now
         self._written_available = available
+        self._written_value = value
         self.async_write_ha_state()
 
 

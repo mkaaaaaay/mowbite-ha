@@ -12,9 +12,9 @@ mower's MQTT broker directly, no cloud and no extra add-on.
   mower controls work with it. Start goes on where a paused mow stopped.
 - **Sensors**: battery, state, GPS quality and accuracy, battery voltage, mow motor temperature, and more that
   are off by default (charge voltage and current, motor controller temperatures, mow motor current and speed).
-  Emergency stop, charging and rain as binary sensors. With the MowBite address set and a MowBite that works out
-  its own battery level, the battery is that one: it stays put when the mower sets off (OpenMower's drops by a
-  fifth from the voltage alone) and is at 0 % where OpenMower sends the mower home.
+  Emergency stop, charging, rain and whether the GPS has a fix as binary sensors. With the MowBite address set and
+  a MowBite that works out its own battery level, the battery is that one: it stays put when the mower sets off
+  (OpenMower's drops by a fifth from the voltage alone) and is at 0 % where OpenMower sends the mower home.
 - **Where the mower is**: a GPS tracker (`device_tracker`) from its map position and the GPS datum, for zones in
   automations ("when the mower enters the front garden") and the Home Assistant map. It updates at most every 10 s
   while the mower moves.
@@ -40,6 +40,10 @@ mower's MQTT broker directly, no cloud and no extra add-on.
     start, the schedule as a calendar, the blade time, the distance driven with the blade on and in all and the runs,
     in total and today, and when the blades and the cleaning are due again, as hours left and as a yes/no for
     reminders
+  - Also off at first, they change something in MowBite the way its own pages do and nothing else: buttons for
+    blades changed and cleaned, after how many blade hours each is due again, and the schedule's on/off, skipping
+    it when it rains or rain is forecast, the battery level it starts from, skipping today and ending a pause (the
+    rest of the schedule stays as it is)
 - **Events** for automations and notifications: all areas done, heading home (with the reason: battery, rain,
   mow motor too hot or sent home), docked, left the dock, docking retry, docking or undocking failed,
   navigation error, mow motor didn't start, GPS lost while mowing, emergency stop and cleared, fully charged,
@@ -116,7 +120,9 @@ Under **Configure** on the integration:
 
 ## The card
 
-Edit a dashboard, add a card and search for MowBite for OpenMower. In YAML:
+Edit a dashboard, add a card and search for MowBite for OpenMower. Its editor (German or English, like Home
+Assistant) lists the mower's values to tick for the status, the ones from the MowBite app marked so, and takes any
+other entity too. In YAML:
 
 ```yaml
 type: custom:mowbite-card

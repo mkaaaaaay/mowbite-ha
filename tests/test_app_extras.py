@@ -22,7 +22,9 @@ from custom_components.mowbite.app import (
 )
 from custom_components.mowbite.const import CONF_APP_URL
 
-from .conftest import app_status
+from custom_components.mowbite.mower import Mower
+
+from .conftest import ROBOT_STATE, app_status, send
 
 BERLIN = ZoneInfo("Europe/Berlin")
 STATS = (
@@ -99,7 +101,7 @@ async def test_entities_off_at_first(
         "sensor.openmower_cleaning_in",
         "binary_sensor.openmower_blade_change_due",
         "binary_sensor.openmower_cleaning_due",
-        "calendar.openmower_mowing_schedule",
+        "calendar.openmower_mowing_calendar",
     ):
         item = registry.async_get(entity_id)
         assert item is not None, entity_id
@@ -113,7 +115,8 @@ async def test_entities_off_at_first(
         "binary_sensor.openmower_cleaning_due",
         "sensor.openmower_wi_fi_signal",
         "sensor.openmower_next_scheduled_start",
-        "calendar.openmower_mowing_schedule",
+        "sensor.openmower_mowing_runs_total",
+        "calendar.openmower_mowing_calendar",
     ):
         registry.async_update_entity(entity_id, disabled_by=None)
     await hass.config_entries.async_reload(entry.entry_id)
@@ -122,7 +125,23 @@ async def test_entities_off_at_first(
     assert hass.states.get("sensor.openmower_cleaning_in").state == "0.0"
     assert hass.states.get("binary_sensor.openmower_cleaning_due").state == "on"
     assert hass.states.get("sensor.openmower_wi_fi_signal").state == "-68.0"
+    # a count without decimals
+    assert hass.states.get("sensor.openmower_mowing_runs_total").state == "12"
     start = dt_util.parse_datetime(hass.states.get("sensor.openmower_next_scheduled_start").state)
     assert start is not None and start > dt_util.utcnow()
-    calendar = hass.states.get("calendar.openmower_mowing_schedule")
+    calendar = hass.states.get("calendar.openmower_mowing_calendar")
     assert calendar.attributes["message"] == "Mowing"
+
+
+async def test_no_accuracy_without_a_fix(hass: HomeAssistant, mower: Mower) -> None:
+    assert hass.states.get("sensor.openmower_position_accuracy").state == "0.012"
+    send(mower, "robot_state/json", {**ROBOT_STATE, "pose": {**ROBOT_STATE["pose"], "pos_accuracy": 999}})
+    await hass.async_block_till_done()
+    assert hass.states.get("sensor.openmower_position_accuracy").state == "unknown"
+
+
+async def test_gps_fix(hass: HomeAssistant, mower: Mower) -> None:
+    assert hass.states.get("binary_sensor.openmower_gps_fix").state == "on"
+    send(mower, "robot_state/json", {**ROBOT_STATE, "pose": {**ROBOT_STATE["pose"], "pos_accuracy": 999}})
+    await hass.async_block_till_done()
+    assert hass.states.get("binary_sensor.openmower_gps_fix").state == "off"

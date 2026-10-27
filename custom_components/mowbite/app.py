@@ -51,6 +51,10 @@ class CannotReachApp(Exception):
     """No MowBite answers at that address."""
 
 
+class AppRefused(Exception):
+    """MowBite didn't take a change."""
+
+
 async def async_fetch(hass: HomeAssistant, url: str) -> dict[str, Any]:
     """The app's settings, raises CannotReachApp."""
     try:
@@ -178,10 +182,22 @@ def parse_system(text: str) -> dict[str, Any]:
 def parse_schedule(text: str) -> dict[str, Any]:
     """Whether it's on, how many plans and when they start: "plan <days> <HH:MM> [areas] [end=HH:MM] ...", days 1 =
     monday .. 7 = sunday, local time, and "pause <YYYY-MM-DD> all|<areas>" (MowBite's schedule.ts)"""
-    out: dict[str, Any] = {"enabled": False, "plans": 0, "starts": [], "pause": None}
+    out: dict[str, Any] = {
+        "enabled": False,
+        "plans": 0,
+        "starts": [],
+        "pause": None,
+        "minbattery": None,
+        "skiprain": None,
+        "skipforecast": None,
+    }
     for words in _lines(text):
         if words[0] == "enabled" and len(words) >= 2:
             out["enabled"] = words[1] == "1"
+        elif words[0] in ("skiprain", "skipforecast") and len(words) >= 2:
+            out[words[0]] = words[1] == "1"
+        elif words[0] == "minbattery" and len(words) >= 2 and words[1].isdigit():
+            out["minbattery"] = int(words[1])
         elif words[0] == "plan":
             out["plans"] += 1
             if len(words) < 3 or not _hhmm(words[2]):
@@ -390,6 +406,54 @@ class AppStatus:
                 return await response.text()
         except (aiohttp.ClientError, TimeoutError, UnicodeDecodeError):
             return None
+
+    async def _post(self, path: str, body: str = "") -> str | None:
+        try:
+            async with async_get_clientsession(self._hass).post(
+                f"{self._url}{path}", data=body.encode(), timeout=aiohttp.ClientTimeout(total=15)
+            ) as response:
+                if response.status != 200:
+                    return None
+                return await response.text()
+        except (aiohttp.ClientError, TimeoutError, UnicodeDecodeError):
+            return None
+
+    def _changed(self) -> None:
+        for listener in list(self._listeners):
+            listener()
+
+    # The only things changed in the app, the way the app's own pages change them (MowBite's stats.ts and
+    # schedule.ts): a part seen to and when it's due again, and some of the schedule's lines
+
+    async def async_part_done(self, part: str) -> None:
+        """The part was seen to now, its blade hours start from 0. Raises AppRefused."""
+        await self._stats_post(f"{STATS_PATH}?done={part}")
+
+    async def async_part_due(self, part: str, hours: int) -> None:
+        """After how many blade hours the part is due again (1 to 5000). Raises AppRefused."""
+        await self._stats_post(f"{STATS_PATH}?due={part}&h={hours}")
+
+    async def _stats_post(self, path: str) -> None:
+        text = await self._post(path) if self._url else None
+        stats = parse_stats(text) if text is not None else None
+        if stats is None or stats["total"] is None:
+            raise AppRefused
+        self.stats = stats
+        self._changed()
+
+    async def async_schedule_set(self, lines: dict[str, str | None]) -> None:
+        """Sets some of the schedule's lines by their first word (None takes it out), all the others as the app
+        has them: the schedule is saved as a whole. Raises AppRefused."""
+        text = await self._get(SCHEDULE_PATH) if self._url else None
+        if text is None:
+            raise AppRefused
+        kept = [line for line in text.splitlines() if line.strip() and line.split()[0] not in lines]
+        new = kept + [f"{key} {value}" for key, value in lines.items() if value is not None]
+        answer = await self._post(SCHEDULE_PATH, "\n".join(new) + "\n")
+        if answer is None:
+            raise AppRefused
+        self.schedule = parse_schedule(answer)
+        self._changed()
 
     async def async_art(self) -> tuple[int, str] | None:
         """The map's pictures the app serves and their interface version, asked once per reading of its version."""

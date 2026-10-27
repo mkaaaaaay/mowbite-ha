@@ -57,6 +57,9 @@
       },
       "cleaning_due": {
         "name": "Cleaning due"
+      },
+      "gps_fix": {
+        "name": "GPS fix"
       }
     },
     "button": {
@@ -83,6 +86,18 @@
       },
       "snooze_morning": {
         "name": "Pause notifications until tomorrow morning"
+      },
+      "blade_done": {
+        "name": "Blades changed"
+      },
+      "cleaning_done": {
+        "name": "Cleaned"
+      },
+      "skip_today": {
+        "name": "Skip today"
+      },
+      "end_pause": {
+        "name": "End pause"
       }
     },
     "event": {
@@ -126,6 +141,15 @@
       },
       "planner_turn_radius": {
         "name": "Turn radius"
+      },
+      "blade_interval": {
+        "name": "Blade change every"
+      },
+      "cleaning_interval": {
+        "name": "Cleaning every"
+      },
+      "min_battery": {
+        "name": "Start from battery level"
       }
     },
     "select": {
@@ -366,11 +390,20 @@
       },
       "planner_mop_up": {
         "name": "Mop up"
+      },
+      "schedule_enabled": {
+        "name": "Mow on schedule"
+      },
+      "skip_rain": {
+        "name": "Skip when it rains"
+      },
+      "skip_forecast": {
+        "name": "Skip when rain is forecast"
       }
     },
     "calendar": {
       "schedule": {
-        "name": "Mowing schedule"
+        "name": "Mowing calendar"
       }
     }
   },
@@ -386,6 +419,9 @@
     },
     "planner_failed": {
       "message": "The planner didn't take it."
+    },
+    "app_refused": {
+      "message": "MowBite didn't take it."
     }
   },
   "options": {

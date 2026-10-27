@@ -57,6 +57,9 @@
       },
       "cleaning_due": {
         "name": "Reinigung fällig"
+      },
+      "gps_fix": {
+        "name": "GPS-Fix"
       }
     },
     "button": {
@@ -83,6 +86,18 @@
       },
       "snooze_morning": {
         "name": "Benachrichtigungen bis morgen früh pausieren"
+      },
+      "blade_done": {
+        "name": "Messer gewechselt"
+      },
+      "cleaning_done": {
+        "name": "Gereinigt"
+      },
+      "skip_today": {
+        "name": "Heute nicht mähen"
+      },
+      "end_pause": {
+        "name": "Pause beenden"
       }
     },
     "event": {
@@ -126,6 +141,15 @@
       },
       "planner_turn_radius": {
         "name": "Wenderadius"
+      },
+      "blade_interval": {
+        "name": "Messerwechsel alle"
+      },
+      "cleaning_interval": {
+        "name": "Reinigung alle"
+      },
+      "min_battery": {
+        "name": "Start ab Akkustand"
       }
     },
     "select": {
@@ -366,11 +390,20 @@
       },
       "planner_mop_up": {
         "name": "Nachputzen"
+      },
+      "schedule_enabled": {
+        "name": "Mähen nach Zeitplan"
+      },
+      "skip_rain": {
+        "name": "Bei Regen auslassen"
+      },
+      "skip_forecast": {
+        "name": "Bei Regenvorhersage auslassen"
       }
     },
     "calendar": {
       "schedule": {
-        "name": "Mähplan"
+        "name": "Mähkalender"
       }
     }
   },
@@ -386,6 +419,9 @@
     },
     "planner_failed": {
       "message": "Der Planer hat es nicht übernommen."
+    },
+    "app_refused": {
+      "message": "MowBite hat das nicht übernommen."
     }
   },
   "options": {

@@ -10,6 +10,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
@@ -23,7 +24,15 @@ PARALLEL_UPDATES = 0
 
 @dataclass(frozen=True, kw_only=True)
 class MowbiteBinarySensorDescription(BinarySensorEntityDescription):
-    state_key: str
+    state_key: str = ""
+    # worked out from robot_state instead of one of its flags
+    value_fn: Callable[[dict], bool | None] | None = None
+
+
+def _gps_fix(state: dict) -> bool | None:
+    accuracy = (state.get("pose") or {}).get("pos_accuracy")
+    # 999 and more is no fix at all: the gps is off while the mower stands, or it lost it
+    return accuracy < 999 if isinstance(accuracy, (int, float)) else None
 
 
 BINARY_SENSORS = (
@@ -43,6 +52,12 @@ BINARY_SENSORS = (
         translation_key="rain",
         device_class=BinarySensorDeviceClass.MOISTURE,
         state_key="rain_detected",
+    ),
+    MowbiteBinarySensorDescription(
+        key="gps_fix",
+        translation_key="gps_fix",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=_gps_fix,
     ),
 )
 
@@ -116,6 +131,8 @@ class MowbiteBinarySensor(MowbiteEntity, BinarySensorEntity):
     def is_on(self) -> bool | None:
         if self.mower.state is None:
             return None
+        if self.entity_description.value_fn:
+            return self.entity_description.value_fn(self.mower.state)
         return bool(self.mower.state.get(self.entity_description.state_key))
 
 

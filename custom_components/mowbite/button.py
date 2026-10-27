@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Any
 
 from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
 from homeassistant.const import EntityCategory
@@ -14,9 +15,10 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import dt as dt_util
 
 from . import MowbiteConfigEntry
+from .app import AppRefused, AppStatus
 from .const import DOMAIN
 from .entity import MowbiteEntity, async_add_when_there
-from .features import ACTION, RPC
+from .features import ACTION, APP, RPC
 from .mower import (
     ACTION_RESET_EMERGENCY,
     ACTION_RESET_JOB,
@@ -80,6 +82,52 @@ SNOOZE_BUTTONS = (
 )
 
 
+@dataclass(frozen=True, kw_only=True)
+class MowbiteAppButtonDescription(ButtonEntityDescription):
+    """What's done in the app with it, off at first like everything that changes something there."""
+
+    press_fn: Callable[[AppStatus], Any]
+    feature: str
+    entity_registry_enabled_default: bool = False
+
+
+async def _skip_today(status: AppStatus) -> None:
+    today = dt_util.now().date().isoformat()
+    pause = (status.schedule or {}).get("pause")
+    # a pause of all of it through today already is enough, one of some areas becomes one of all of today
+    if pause and pause["areas"] == "all" and pause["until"] >= today:
+        return
+    await status.async_schedule_set({"pause": f"{today} all"})
+
+
+APP_BUTTONS = (
+    MowbiteAppButtonDescription(
+        key="blade_done",
+        translation_key="blade_done",
+        press_fn=lambda status: status.async_part_done("blade"),
+        feature=APP + "maint_blade",
+    ),
+    MowbiteAppButtonDescription(
+        key="cleaning_done",
+        translation_key="cleaning_done",
+        press_fn=lambda status: status.async_part_done("clean"),
+        feature=APP + "maint_clean",
+    ),
+    MowbiteAppButtonDescription(
+        key="skip_today",
+        translation_key="skip_today",
+        press_fn=_skip_today,
+        feature=APP + "schedule",
+    ),
+    MowbiteAppButtonDescription(
+        key="end_pause",
+        translation_key="end_pause",
+        press_fn=lambda status: status.async_schedule_set({"pause": None}),
+        feature=APP + "schedule",
+    ),
+)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: MowbiteConfigEntry,
@@ -101,6 +149,10 @@ async def async_setup_entry(
             ),
             (RPC + LEFTOVERS, lambda: MowbiteLeftoversButton(entry)),
             (RPC + ANGLE_RESET, lambda: MowbiteAngleResetButton(entry)),
+            *(
+                (description.feature, lambda description=description: MowbiteAppButton(entry, description))
+                for description in APP_BUTTONS
+            ),
         ],
     )
 
@@ -193,3 +245,29 @@ class MowbiteAngleResetButton(MowbiteEntity, ButtonEntity):
             raise HomeAssistantError(translation_domain=DOMAIN, translation_key="not_connected") from err
         except (RpcError, TimeoutError) as err:
             raise HomeAssistantError(translation_domain=DOMAIN, translation_key="planner_failed") from err
+
+
+class MowbiteAppButton(MowbiteEntity, ButtonEntity):
+    """Something done in the MowBite app, without the mower."""
+
+    entity_description: MowbiteAppButtonDescription
+    _listen = ()
+
+    def __init__(self, entry: MowbiteConfigEntry, description: MowbiteAppButtonDescription) -> None:
+        super().__init__(entry, description.key)
+        self.entity_description = description
+        self._status = entry.runtime_data.status
+
+    @property
+    def available(self) -> bool:
+        return self._status.schedule is not None if self.entity_description.feature == APP + "schedule" else self._status.stats is not None
+
+    async def async_press(self) -> None:
+        try:
+            await self.entity_description.press_fn(self._status)
+        except AppRefused as err:
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="app_refused") from err
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(self._status.add_listener(self.async_write_ha_state))

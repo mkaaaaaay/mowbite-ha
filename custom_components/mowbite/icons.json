@@ -9,6 +9,12 @@
       },
       "cleaning_due": {
         "default": "mdi:broom"
+      },
+      "gps_fix": {
+        "default": "mdi:crosshairs-off",
+        "state": {
+          "on": "mdi:crosshairs-gps"
+        }
       }
     },
     "button": {
@@ -35,6 +41,18 @@
       },
       "snooze_morning": {
         "default": "mdi:bell-sleep-outline"
+      },
+      "blade_done": {
+        "default": "mdi:saw-blade"
+      },
+      "cleaning_done": {
+        "default": "mdi:broom"
+      },
+      "skip_today": {
+        "default": "mdi:calendar-remove"
+      },
+      "end_pause": {
+        "default": "mdi:calendar-check"
       }
     },
     "device_tracker": {
@@ -59,6 +77,15 @@
       },
       "planner_turn_radius": {
         "default": "mdi:u-turn-left"
+      },
+      "blade_interval": {
+        "default": "mdi:saw-blade"
+      },
+      "cleaning_interval": {
+        "default": "mdi:broom"
+      },
+      "min_battery": {
+        "default": "mdi:battery-60"
       }
     },
     "select": {
@@ -195,11 +222,20 @@
       },
       "planner_mop_up": {
         "default": "mdi:broom"
+      },
+      "schedule_enabled": {
+        "default": "mdi:calendar-clock"
+      },
+      "skip_rain": {
+        "default": "mdi:weather-rainy"
+      },
+      "skip_forecast": {
+        "default": "mdi:weather-pouring"
       }
     },
     "calendar": {
       "schedule": {
-        "default": "mdi:calendar-clock"
+        "default": "mdi:calendar-month"
       }
     }
   }

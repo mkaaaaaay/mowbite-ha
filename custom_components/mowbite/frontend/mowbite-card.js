@@ -2244,95 +2244,15 @@ class Dashboard {
 }
 
 class MowbiteCard extends HTMLElement {
-  static getConfigForm() {
-    return {
-      schema: [
-        {name: 'entity', required: true, selector: {entity: {domain: 'lawn_mower', integration: 'mowbite'}}},
-        {
-          name: 'theme',
-          selector: {
-            select: {
-              mode: 'dropdown',
-              options: [
-                {value: 'frost', label: 'Frosted glass'},
-                {value: 'aurora', label: 'Aurora'},
-                {value: 'sunny', label: 'Sunny'},
-                {value: 'openmower', label: 'OpenMower'},
-                {value: 'dark', label: 'Dark'},
-                {value: 'light', label: 'Light'},
-                {value: 'auto', label: 'Like Home Assistant'},
-              ],
-            },
-          },
-        },
-        {
-          name: 'map',
-          selector: {
-            select: {
-              mode: 'dropdown',
-              options: [
-                {value: 'integration', label: 'As set in the integration'},
-                {value: 'app', label: 'As set in the MowBite app'},
-                {value: 'auto', label: 'While the mower drives'},
-                {value: 'always', label: 'Always'},
-                {value: 'never', label: 'Never'},
-              ],
-            },
-          },
-        },
-        {
-          name: 'map_style',
-          selector: {
-            select: {
-              mode: 'dropdown',
-              options: [
-                {value: 'app', label: 'As set in the MowBite app'},
-                {value: 'plain', label: 'Plain'},
-                {value: 'garden', label: 'Garden'},
-              ],
-            },
-          },
-        },
-        {name: 'map_height', selector: {number: {min: 150, max: 1000, step: 10, mode: 'box', unit_of_measurement: 'px'}}},
-        {name: 'status', selector: {boolean: {}}},
-        {name: 'today', selector: {boolean: {}}},
-        {name: 'leftovers', selector: {boolean: {}}},
-        {name: 'blur', selector: {boolean: {}}},
-        {name: 'entities', selector: {entity: {multiple: true}}},
-        {
-          name: 'hide',
-          selector: {
-            select: {
-              multiple: true,
-              options: [
-                {value: 'gps', label: 'GPS'},
-                {value: 'speed', label: 'Speed'},
-                {value: 'progress', label: 'Progress'},
-                {value: 'charging', label: 'Charging'},
-                {value: 'battery', label: 'Battery voltage'},
-                {value: 'rain', label: 'Rain'},
-                {value: 'wifi', label: 'Wi-Fi'},
-                {value: 'temperatures', label: 'Temperatures'},
-              ],
-            },
-          },
-        },
-      ],
-      computeLabel: (schema) =>
-        ({
-          entity: 'Mower',
-          theme: 'Look',
-          map: 'Map',
-          map_style: 'Map style (garden without the MowBite address: pictures by the areas\' names)',
-          map_height: 'Map height (empty: square like in the app)',
-          status: 'Status and buttons',
-          today: 'Today: what was mowed, the last runs, the next start',
-          leftovers: 'Check the last mow for leftovers',
-          blur: 'Blur behind the glass (slower on old tablets)',
-          entities: 'More values in the status',
-          hide: 'Leave out of the status',
-        })[schema.name],
-    };
+  // the editor in Home Assistant's own form fields, with this mower's entities to tick for the status
+  static async getConfigElement() {
+    if (!customElements.get('ha-form')) {
+      // Home Assistant loads its form fields with its own card editors: an entities card's brings them along
+      const helpers = await window.loadCardHelpers?.();
+      const card = await helpers?.createCardElement({type: 'entities', entities: []});
+      await card?.constructor.getConfigElement?.();
+    }
+    return document.createElement('mowbite-card-editor');
   }
 
   static getStubConfig(hass) {
@@ -3234,9 +3154,236 @@ class MowbiteCard extends HTMLElement {
 // home assistant's frontend swaps window.customElements for a scoped registry while it starts. this file can come
 // before that (the start page loads it early), and an element defined then is missing from the registry the dashboard
 // asks: "configuration error". so the card waits for the frontend's own elements before it defines itself
+// the editor's words in German, by their English
+const EDITOR_DE = {
+  Mower: 'Mäher',
+  Look: 'Aussehen',
+  Map: 'Karte',
+  "Map style (garden without the MowBite address: pictures by the areas' names)":
+    'Kartenstil (Garten ohne MowBite-Adresse: Bilder nach den Namen der Flächen)',
+  'Map height (empty: square like in the app)': 'Kartenhöhe (leer: quadratisch wie in der App)',
+  'Status and buttons': 'Status und Buttons',
+  'Today: what was mowed, the last runs, the next start': 'Heute: was gemäht wurde, die letzten Mähvorgänge, der nächste Start',
+  'Check the last mow for leftovers': 'Letzten Mähvorgang auf Reste prüfen',
+  'Blur behind the glass (slower on old tablets)': 'Unschärfe hinter dem Glas (langsamer auf alten Tablets)',
+  "The mower's values in the status": 'Werte des Mähers im Status',
+  'Other values in the status': 'Weitere Werte im Status',
+  'Leave out of the status': 'Im Status weglassen',
+  'Frosted glass': 'Milchglas',
+  Dark: 'Dunkel',
+  Light: 'Hell',
+  'Like Home Assistant': 'Wie Home Assistant',
+  'As set in the integration': 'Wie in der Integration eingestellt',
+  'As set in the MowBite app': 'Wie in der MowBite-App eingestellt',
+  'While the mower drives': 'Wenn der Mäher fährt',
+  Always: 'Immer',
+  Never: 'Nie',
+  Plain: 'Schlicht',
+  Garden: 'Garten',
+  Speed: 'Tempo',
+  Progress: 'Fortschritt',
+  Charging: 'Ladestrom',
+  'Battery voltage': 'Akkuspannung',
+  Rain: 'Regen',
+  'Wi-Fi': 'WLAN',
+  Temperatures: 'Temperaturen',
+};
+
+// what of the mower's own entities can stand in the status: values, not its buttons
+// (a button shows when it was last pressed, a tap on it presses it in its dialog)
+const EDITOR_DOMAINS = ['sensor', 'binary_sensor', 'switch', 'select', 'number', 'button'];
+
+// the entities whose values come from the MowBite app (its address set in the integration), by their translation key
+const APP_ENTITY_KEYS = new Set([
+  'app_version',
+  'cpu_temperature',
+  'memory_free',
+  'disk_free',
+  'booted',
+  'schedule',
+  'schedule_started',
+  'schedule_skipped',
+  'blade_time_per_charge',
+  'wifi_signal',
+  'next_start',
+  'blade_time_total',
+  'mowing_distance_total',
+  'distance_total',
+  'runs_total',
+  'blade_time_today',
+  'runs_today',
+  'blade_change_in',
+  'cleaning_in',
+  'blade_change_due',
+  'cleaning_due',
+  'blade_done',
+  'cleaning_done',
+  'skip_today',
+  'end_pause',
+  'schedule_enabled',
+  'skip_rain',
+  'skip_forecast',
+  'blade_interval',
+  'cleaning_interval',
+  'min_battery',
+]);
+
+// not offered for the status: what's set rather than shown, and the yes/no for reminders (the hours left say it)
+const EDITOR_LEAVE_OUT = new Set(['blade_interval', 'cleaning_interval', 'blade_change_due', 'cleaning_due']);
+
+// the mower's entities as options {value, label}, named without the mower's name in front, the app's marked
+function mowerEntityOptions(hass, mowerId, appMark = '(MowBite app)') {
+  const device = hass?.entities?.[mowerId]?.device_id;
+  if (!device) return [];
+  const mower = hass.states[mowerId]?.attributes.friendly_name;
+  return Object.values(hass.entities)
+    .filter((e) => e.device_id === device && e.entity_id !== mowerId && hass.states[e.entity_id])
+    .filter((e) => EDITOR_DOMAINS.includes(e.entity_id.split('.')[0]) && !EDITOR_LEAVE_OUT.has(e.translation_key))
+    .map((e) => {
+      // the entity's own name, without the mower's (or its full one cut short by it)
+      const name = hass.states[e.entity_id].attributes.friendly_name ?? e.entity_id;
+      const own = e.name || (mower && name.startsWith(`${mower} `) ? name.slice(mower.length + 1) : name);
+      return {value: e.entity_id, label: APP_ENTITY_KEYS.has(e.translation_key) ? `${own} ${appMark}` : own};
+    })
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+class MowbiteCardEditor extends HTMLElement {
+  setConfig(config) {
+    this._config = config;
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (this._form) this._form.hass = hass;
+    else this._render();
+  }
+
+  _render() {
+    if (!this._hass || !this._config) return;
+    if (!this._form) {
+      this._form = document.createElement('ha-form');
+      this._form.addEventListener('value-changed', (ev) => this._changed(ev.detail.value));
+      this.appendChild(this._form);
+    }
+    const de = (this._hass.locale?.language || this._hass.language || 'en').toLowerCase().startsWith('de');
+    const t = (text) => (de && EDITOR_DE[text]) || text;
+    const options = mowerEntityOptions(this._hass, this._config.entity, de ? '(MowBite-App)' : '(MowBite app)');
+    const own = new Set(options.map((o) => o.value));
+    const ids = (this._config.entities ?? []).map((item) => (typeof item === 'string' ? item : item?.entity)).filter(Boolean);
+    const list = (values) => values.map(([value, label]) => ({value, label: t(label)}));
+    const select = (values, multiple = false) => ({select: {mode: multiple ? 'list' : 'dropdown', multiple, options: list(values)}});
+    this._form.hass = this._hass;
+    this._form.schema = [
+      {name: 'entity', required: true, selector: {entity: {domain: 'lawn_mower', integration: 'mowbite'}}},
+      {
+        name: 'theme',
+        selector: select([
+          ['frost', 'Frosted glass'],
+          ['aurora', 'Aurora'],
+          ['sunny', 'Sunny'],
+          ['openmower', 'OpenMower'],
+          ['dark', 'Dark'],
+          ['light', 'Light'],
+          ['auto', 'Like Home Assistant'],
+        ]),
+      },
+      {
+        name: 'map',
+        selector: select([
+          ['integration', 'As set in the integration'],
+          ['app', 'As set in the MowBite app'],
+          ['auto', 'While the mower drives'],
+          ['always', 'Always'],
+          ['never', 'Never'],
+        ]),
+      },
+      {
+        name: 'map_style',
+        selector: select([
+          ['app', 'As set in the MowBite app'],
+          ['plain', 'Plain'],
+          ['garden', 'Garden'],
+        ]),
+      },
+      {name: 'map_height', selector: {number: {min: 150, max: 1000, step: 10, mode: 'box', unit_of_measurement: 'px'}}},
+      {name: 'status', selector: {boolean: {}}},
+      {name: 'today', selector: {boolean: {}}},
+      {name: 'leftovers', selector: {boolean: {}}},
+      {name: 'blur', selector: {boolean: {}}},
+      ...(options.length
+        ? [{name: 'mower_entities', selector: {select: {mode: 'list', multiple: true, options}}}]
+        : []),
+      {name: 'other_entities', selector: {entity: {multiple: true}}},
+      {
+        name: 'hide',
+        selector: select(
+          [
+            ['gps', 'GPS'],
+            ['speed', 'Speed'],
+            ['progress', 'Progress'],
+            ['charging', 'Charging'],
+            ['battery', 'Battery voltage'],
+            ['rain', 'Rain'],
+            ['wifi', 'Wi-Fi'],
+            ['temperatures', 'Temperatures'],
+          ],
+          true,
+        ),
+      },
+    ];
+    // the card's own defaults, so the switches show what the card does
+    this._form.data = {
+      theme: 'frost',
+      map: 'integration',
+      map_style: 'app',
+      status: true,
+      today: true,
+      leftovers: true,
+      blur: true,
+      ...this._config,
+      mower_entities: ids.filter((id) => own.has(id)),
+      other_entities: ids.filter((id) => !own.has(id)),
+    };
+    this._form.computeLabel = (schema) =>
+      t(
+        {
+          entity: 'Mower',
+          theme: 'Look',
+          map: 'Map',
+          map_style: "Map style (garden without the MowBite address: pictures by the areas' names)",
+          map_height: 'Map height (empty: square like in the app)',
+          status: 'Status and buttons',
+          today: 'Today: what was mowed, the last runs, the next start',
+          leftovers: 'Check the last mow for leftovers',
+          blur: 'Blur behind the glass (slower on old tablets)',
+          mower_entities: "The mower's values in the status",
+          other_entities: 'Other values in the status',
+          hide: 'Leave out of the status',
+        }[schema.name],
+      );
+  }
+
+  // the ticked ones of the mower first, then the others, with a name given in YAML kept
+  _changed(value) {
+    const given = new Map(
+      (this._config.entities ?? []).filter((item) => typeof item === 'object' && item?.entity).map((item) => [item.entity, item]),
+    );
+    const {mower_entities: mine = [], other_entities: others = [], ...config} = value;
+    const entities = [...mine, ...others.filter((id) => !mine.includes(id))].map((id) => given.get(id) ?? id);
+    if (entities.length) config.entities = entities;
+    else delete config.entities;
+    if (!config.hide?.length) delete config.hide;
+    this._config = config;
+    this.dispatchEvent(new CustomEvent('config-changed', {detail: {config}, bubbles: true, composed: true}));
+  }
+}
+
 function defineCard() {
   if (customElements.get('mowbite-card')) return;
   customElements.define('mowbite-card', MowbiteCard);
+  if (!customElements.get('mowbite-card-editor')) customElements.define('mowbite-card-editor', MowbiteCardEditor);
   window.customCards = window.customCards || [];
   window.customCards.push({
     type: 'mowbite-card',
