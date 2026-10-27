@@ -36,14 +36,15 @@ mower's MQTT broker directly, no cloud and no extra add-on.
   - The MowBite version, the mower computer's CPU temperature, free memory and storage, whether the schedule is
     on, its last start and the last start it left out (rain, dark, battery low, ...), and the longest blade time
     on one charge in the last 30 days, which gets shorter as the battery ages (with the MowBite address set)
-  - Off at first, switch them on if you like (with the MowBite address set): the Wi-Fi signal, the next scheduled
-    start, the schedule as a calendar, the blade time, the distance driven with the blade on and in all and the runs,
-    in total and today, and when the blades and the cleaning are due again, as hours left and as a yes/no for
-    reminders
-  - Also off at first, they change something in MowBite the way its own pages do and nothing else: buttons for
-    blades changed and cleaned, after how many blade hours each is due again, and the schedule's on/off, skipping
-    it when it rains or rain is forecast, the battery level it starts from, skipping today and ending a pause (the
-    rest of the schedule stays as it is)
+- **More values, off at first** (with the MowBite address set, switch them on if you like): the Wi-Fi signal, the
+  next scheduled start, a mowing calendar with the schedule's starts (for calendar triggers, the sprinkler off before
+  the mower starts), the blade time, the distance driven with the blade on and in all and the runs, in total and
+  today.
+- **Maintenance**, off at first: when the blades and the cleaning are due again, as hours left and as a yes/no for
+  reminders, a button each for blades changed and cleaned, and after how many blade hours each is due.
+- **The schedule from Home Assistant**, off at first: on or off, skip it when it rains or when rain is forecast, the
+  battery level it starts from, skip today and end a pause. These and the maintenance change only that in MowBite,
+  the way its own pages do. The rest of the schedule, your plans, stays as it is.
 - **Events** for automations and notifications: all areas done, heading home (with the reason: battery, rain,
   mow motor too hot or sent home), docked, left the dock, docking retry, docking or undocking failed,
   navigation error, mow motor didn't start, GPS lost while mowing, emergency stop and cleared, fully charged,
@@ -122,7 +123,14 @@ Under **Configure** on the integration:
 
 Edit a dashboard, add a card and search for MowBite for OpenMower. Its editor (German or English, like Home
 Assistant) lists the mower's values to tick for the status, the ones from the MowBite app marked so, and takes any
-other entity too. In YAML:
+other entity too:
+
+<p>
+  <img src="images/status-entities.png" alt="The status with values added" width="49%">
+  <img src="images/editor.png" alt="The card's editor with the mower's values to tick" width="49%">
+</p>
+
+In YAML:
 
 ```yaml
 type: custom:mowbite-card
@@ -184,6 +192,8 @@ Android.
   the page from before the integration was there.
 - **Dashboards in YAML mode**: add `/mowbite/mowbite-card.js` as a JavaScript module resource yourself, the
   integration only adds it to dashboards Home Assistant keeps.
+- **The old card after an update**: restart Home Assistant after updating, then reload the page (on a phone or
+  tablet maybe twice). Behind a reverse proxy that caches, clear its cache for `/mowbite/`.
 - **The mower is unavailable**: check the broker host and port, and the prefix. The integration keeps trying,
   a mower that's off (winter, shed) isn't an error.
 - **"MowBite doesn't answer" under Repairs**: the MowBite address set under Configure didn't answer for 10 minutes
