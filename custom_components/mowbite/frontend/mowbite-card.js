@@ -642,10 +642,15 @@ const MAP_STYLE = `
     touch-action: none;
   }
 
+  /* bigger than the map by OVERSCAN on each side, moved with a transform (see setView) */
   .map svg {
     display: block;
-    width: 100%;
-    height: 100%;
+    position: absolute;
+    left: -50%;
+    top: -50%;
+    width: 200%;
+    height: 200%;
+    will-change: transform;
     cursor: grab;
   }
 
@@ -1127,6 +1132,12 @@ const TRACK_CHUNK = 200;
 const JUMP = 5;
 // following the mower the map shows this many metres around it, like the app's overview, until zoomed
 const FOLLOW_SPAN = 6;
+// the map is drawn this much bigger on each side than what's shown (half of the shown width): moving the view only
+// slides the drawn picture (the graphics card does that, nothing is drawn anew), and only once it would run out the
+// picture is drawn again around the new view. a garden's whole svg drawn anew for every frame of following stutters
+const OVERSCAN = 0.5;
+// drawn again once the view moved this much of the overscan
+const OVERSCAN_USED = 0.8;
 
 // Poses come about once a second. Easing towards each new one looks like stop and go, so like the app the mower is
 // played back one update interval late, at constant speed between the last two
@@ -1294,7 +1305,8 @@ class MowbiteMap {
   }
 
   refresh() {
-    const box = this.svg.getBoundingClientRect();
+    // the map's own size: the svg is bigger (OVERSCAN)
+    const box = this.section.getBoundingClientRect();
     this.box = {width: box.width, height: box.height};
     if (this.view) this.setView(this.view, true);
     else this.fit();
@@ -1316,7 +1328,7 @@ class MowbiteMap {
   }
 
   toWorld(clientX, clientY) {
-    const box = this.svg.getBoundingClientRect();
+    const box = this.section.getBoundingClientRect();
     const k = this.k;
     const cx = this.view.x + this.view.w / 2 + (clientX - box.left - box.width / 2) / k;
     const cy = this.view.y + this.view.h / 2 + (clientY - box.top - box.height / 2) / k;
@@ -1777,10 +1789,22 @@ class MowbiteMap {
     if (following) this.followSpan = Math.min(w, h);
   }
 
+  // the view shown: the svg is drawn around it with OVERSCAN, a view that only moved slides the drawn svg along
   setView(view, resized = false) {
     const zoomed = resized || !this.view || view.w !== this.view.w || view.h !== this.view.h;
     this.view = view;
-    this.svg.setAttribute('viewBox', `${view.x} ${view.y} ${view.w} ${view.h}`);
+    const drawn = this.drawn;
+    const dx = drawn ? drawn.x + drawn.w / 2 - (view.x + view.w / 2) : 0;
+    const dy = drawn ? drawn.y + drawn.h / 2 - (view.y + view.h / 2) : 0;
+    if (zoomed || !drawn || Math.abs(dx) > view.w * OVERSCAN * OVERSCAN_USED || Math.abs(dy) > view.h * OVERSCAN * OVERSCAN_USED) {
+      const grow = 1 + 2 * OVERSCAN;
+      this.drawn = {x: view.x - view.w * OVERSCAN, y: view.y - view.h * OVERSCAN, w: view.w * grow, h: view.h * grow};
+      this.svg.setAttribute('viewBox', `${this.drawn.x} ${this.drawn.y} ${this.drawn.w} ${this.drawn.h}`);
+      this.svg.style.transform = '';
+    } else {
+      const k = this.k;
+      this.svg.style.transform = `translate(${(dx * k).toFixed(1)}px, ${(dy * k).toFixed(1)}px)`;
+    }
     // icons that keep their size on screen follow the zoom, moving the view leaves them as they are
     if (zoomed) {
       this.drawDocks();
@@ -2333,7 +2357,10 @@ class MowbiteCard extends HTMLElement {
     const moved = !first && this._built && own.some((id) => id && this._hass.states[id] !== hass.states[id]);
     this._hass = hass;
     if (moved) this._update();
-    this._app?.setLanguage(this._lang);
+    if (this._app && this._langSet !== this._lang) {
+      this._app.setLanguage(this._lang);
+      this._langSet = this._lang;
+    }
     this._applyLook();
     if (first) {
       // the waiting text was drawn before the language was known
@@ -2582,10 +2609,17 @@ class MowbiteCard extends HTMLElement {
   _applyLook() {
     const root = this.shadowRoot.querySelector('.mb');
     if (!root) return;
-    // for hyphenation of the button labels
-    root.lang = this._lang;
     let theme = this._config?.theme ?? 'frost';
     if (theme === 'auto') theme = this._hass?.themes?.darkMode ? 'dark' : 'light';
+    const colors = {...MAP_COLORS, ...(this._settings?.colors ?? {})};
+    // only when something changed: Home Assistant hands the card a new hass for every state in the house, many times
+    // a second, and setting the same classes and colors again still makes the browser restyle all of the garden
+    const key = JSON.stringify([this._lang, theme, this._config?.blur, this._config?.map_height, colors]);
+    if (root === this._lookRoot && key === this._lookKey) return;
+    this._lookRoot = root;
+    this._lookKey = key;
+    // for hyphenation of the button labels
+    root.lang = this._lang;
     for (const t of THEMES) root.classList.toggle(t, t === theme);
     root.classList.toggle('noblur', this._config?.blur === false);
     const mapSection = this.shadowRoot.querySelector('.map');
@@ -2595,8 +2629,7 @@ class MowbiteCard extends HTMLElement {
       mapSection.style.height = height > 0 ? `${height}px` : '';
       mapSection.style.maxHeight = height > 0 ? 'none' : '';
     }
-    const colors = {...MAP_COLORS, ...(this._settings?.colors ?? {})};
-    for (const [key, value] of Object.entries(colors)) root.style.setProperty(`--c-${key}`, value);
+    for (const [name, value] of Object.entries(colors)) root.style.setProperty(`--c-${name}`, value);
   }
 
   _render() {
@@ -2661,6 +2694,8 @@ class MowbiteCard extends HTMLElement {
     this._built = true;
     this._map?.destroy();
     this._map = new MowbiteMap(this.shadowRoot.querySelector('.map'));
+    // a new map follows the mower too if it's already driving
+    this._wasDriving = undefined;
     if (this._art) this._map.setArt(this._art.art);
     this._map.setIcons(this._settings?.icons);
     this._map.setLook(this._look());
