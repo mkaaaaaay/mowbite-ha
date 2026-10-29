@@ -156,7 +156,20 @@ BATTERY_EVERY = 15
 VERSION_EVERY = 60
 
 # what the schedule log says when it didn't start, the reason after "skip_"
-SKIP_REASONS = ["rain", "forecast", "dark", "battery", "busy", "offline", "emergency", "paused"]
+SKIP_REASONS = [
+    "rain",
+    "forecast",
+    "dark",
+    "battery",
+    "busy",
+    "offline",
+    "emergency",
+    "paused",
+    "cold",
+    "end",
+    "gone",
+    "no_area",
+]
 
 
 def _lines(text: str) -> list[list[str]]:

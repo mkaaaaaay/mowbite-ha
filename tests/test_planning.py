@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import copy
 from datetime import timedelta
+import json
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -18,6 +20,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from custom_components.mowbite.app import (
+    SKIP_REASONS,
     parse_battery,
     parse_battery_level,
     parse_schedule,
@@ -30,6 +33,8 @@ from custom_components.mowbite.planning import lawn_area, plan_progress, trim_pl
 from custom_components.mowbite.websocket import planner_sizes
 
 from .conftest import ACTIONS, ROBOT_STATE, app_status, send
+
+TRANSLATIONS = Path(__file__).parent.parent / "custom_components" / "mowbite" / "translations"
 
 
 def square(x: float, y: float, size: float) -> list[dict[str, float]]:
@@ -186,6 +191,12 @@ def test_app_status_texts() -> None:
     assert schedule["enabled"] is True and schedule["plans"] == 2
     log = parse_schedule_log("100 started 100\n200 skipped_area x\n300 skip_rain\n400 started 80\n")
     assert log == {"started": 400, "skipped": 300, "skip_reason": "rain"}
+    # every reason the app's scheduler logs, each with its words in both languages
+    for reason in ("cold", "end", "gone", "no_area"):
+        assert parse_schedule_log(f"500 skip_{reason} 4\n")["skip_reason"] in SKIP_REASONS
+    for lang in ("en", "de"):
+        words = json.loads((TRANSLATIONS / f"{lang}.json").read_text(encoding="utf-8"))
+        assert set(words["entity"]["sensor"]["schedule_skipped"]["state"]) == set(SKIP_REASONS)
     battery = parse_battery(
         "charge 1 2 12.1 29.09 27.78\nrun 2 3 70.0 27.78 26.0\nrun 3000000 3000100 60.8 27.78 26.71\n"
         "run 3000100 3000200 0.0 29.09 27.54\nrun 3000200 3000300 1.3 29.09 28.5\n",
@@ -401,7 +412,9 @@ async def test_app_status(
             "/version.json": '{"version": "1.4.0"}',
             "/cgi-bin/system": "mem_total 4000\nmem_available 1000\ndata_free 1668079616\nuptime 3600\ncpu_temp 66.7\n",
             "/cgi-bin/schedule": "enabled 1\nplan 1 10:00\n",
-            "/cgi-bin/schedule?log": f"{dt_util.utcnow().timestamp() - 60:.0f} skip_rain\n",
+            # the newest one counts, cold with the temperature after it
+            "/cgi-bin/schedule?log": f"{dt_util.utcnow().timestamp() - 120:.0f} skip_rain\n"
+            f"{dt_util.utcnow().timestamp() - 60:.0f} skip_cold 4\n",
         },
     )
     entry.add_to_hass(hass)
@@ -412,7 +425,7 @@ async def test_app_status(
     assert hass.states.get("sensor.openmower_cpu_temperature").state == "66.7"
     assert hass.states.get("sensor.openmower_free_storage").state == "1.7"
     assert hass.states.get("binary_sensor.openmower_schedule").state == "on"
-    assert hass.states.get("sensor.openmower_last_skipped_start").state == "rain"
+    assert hass.states.get("sensor.openmower_last_skipped_start").state == "cold"
     # the battery's log didn't answer: no sensor for it
     assert hass.states.get("sensor.openmower_longest_blade_time_per_charge") is None
     # a container below level 4 isn't asked for MowBite's battery level

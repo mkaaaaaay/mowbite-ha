@@ -317,7 +317,11 @@
           "busy": "Beschäftigt",
           "offline": "Mäher nicht erreichbar",
           "emergency": "Notaus",
-          "paused": "Pausiert"
+          "paused": "Pausiert",
+          "cold": "Zu kalt",
+          "end": "Endzeit beim Laden erreicht",
+          "gone": "Startzeit geändert oder entfernt",
+          "no_area": "Keine Fläche mehr zu mähen"
         },
         "state_attributes": {
           "time": {
