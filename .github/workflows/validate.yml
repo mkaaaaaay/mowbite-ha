@@ -1,11 +1,15 @@
 name: Validate
 
+# on every push to a branch and every pull request, every night (HACS and hassfest change), and from the release before
+# it publishes anything (a tag runs it there, not here)
 on:
   push:
+    branches: ["**"]
   pull_request:
   schedule:
     - cron: "0 3 * * *"
   workflow_dispatch:
+  workflow_call:
 
 permissions: {}
 
@@ -26,3 +30,43 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: home-assistant/actions/hassfest@master
+
+  tests:
+    name: tests (Home Assistant ${{ matrix.ha }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # the oldest Home Assistant hacs.json lets in and the newest one, each with its pytest-homeassistant-custom-component
+        include:
+          - ha: "2026.9.0"
+            phcc: "0.13.363"
+          - ha: "2026.10.4"
+            phcc: "0.13.375"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - run: pip install pytest-homeassistant-custom-component==${{ matrix.phcc }}
+      - run: python -B -m pytest -q -p no:cacheprovider
+
+  lint:
+    name: ruff and node
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - run: pip install ruff==0.17.0
+      - run: ruff check --no-cache .
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: The card and the build scripts parse
+        run: for f in custom_components/mowbite/frontend/*.js scripts/*.js scripts/*.mjs; do node --check "$f"; done

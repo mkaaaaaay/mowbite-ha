@@ -1,22 +1,63 @@
 name: Release
 
-# the integration as a zip on every release: HACS installs it from there (hacs.json zip_release), and GitHub counts
-# how often each release was downloaded
+# a v* tag pushed: the checks first, then the release with the integration as a zip (HACS installs it from there,
+# hacs.json zip_release, and GitHub counts how often each one was downloaded). its notes are the tag's message. it's a
+# draft until the zip is on it, and it's only made once the environment release let it go
 on:
-  release:
-    types: [published]
+  push:
+    tags: ["v*"]
 
-permissions:
-  contents: write
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  zip:
+  checks:
+    uses: ./.github/workflows/validate.yml
+    permissions:
+      contents: read
+
+  tag:
+    name: tag and version
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
-      - name: Zip the integration
-        run: cd custom_components/mowbite && zip -r ../../mowbite.zip . -x '__pycache__/*'
-      - name: Attach it to the release
-        run: gh release upload "${{ github.event.release.tag_name }}" mowbite.zip --clobber
+        with:
+          fetch-depth: 0
+      - name: The tag has a message, is on main and says the manifest's version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          # checkout leaves a tag without its message, fetched again as it is
+          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+          [ "$(git cat-file -t "refs/tags/$TAG")" = tag ] || { echo "::error::$TAG has no message (git tag -a)"; exit 1; }
+          [ -n "$(git tag -l --format='%(contents)' "$TAG" | tr -d '[:space:]')" ] || { echo "::error::$TAG's message is empty"; exit 1; }
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::$TAG isn't on main"; exit 1; }
+          version=$(python3 -c 'import json; print(json.load(open("custom_components/mowbite/manifest.json"))["version"])')
+          [ "v$version" = "$TAG" ] || { echo "::error::manifest.json says $version, the tag $TAG"; exit 1; }
+
+  release:
+    name: release
+    needs: [checks, tag]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Draft, zip, publish
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+          git tag -l --format='%(contents)' "$TAG" > notes.md
+          (cd custom_components/mowbite && zip -r ../../mowbite.zip . -x '__pycache__/*')
+          # a run again after one that stopped halfway finds its draft
+          gh release view "$TAG" > /dev/null 2>&1 || gh release create "$TAG" --draft --verify-tag --title "${TAG#v}" --notes-file notes.md
+          gh release upload "$TAG" mowbite.zip --clobber
+          gh release edit "$TAG" --draft=false --latest
