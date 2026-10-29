@@ -47,11 +47,14 @@ jobs:
             phcc: "0.13.375"
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.14"
-      - run: pip install pytest-homeassistant-custom-component==${{ matrix.phcc }}
-      - run: python -B -m pytest -q -p no:cacheprovider
+      # in Home Assistant's own image: it brings what its components need (the frontend, http, lovelace), a bare python
+      # doesn't. what the integration needs on top from manifest.json
+      - name: Tests in Home Assistant ${{ matrix.ha }}
+        run: |
+          docker run --rm --entrypoint sh -v "$PWD":/src -w /src ghcr.io/home-assistant/home-assistant:${{ matrix.ha }} -c '
+            pip install -q pytest-homeassistant-custom-component==${{ matrix.phcc }} \
+              $(python -c "import json; print(\" \".join(json.load(open(\"custom_components/mowbite/manifest.json\"))[\"requirements\"]))") &&
+            python -B -m pytest -q -p no:cacheprovider'
 
   lint:
     name: ruff and node
