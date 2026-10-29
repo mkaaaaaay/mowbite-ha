@@ -236,6 +236,11 @@ const MAP_COLORS = {
 // what the card draws with them, worked out where the pictures are. plain data in, plain data and svg text out, so the
 // same runs on the mower's own pictures in their sandbox (this function's text goes in there)
 function artOps(art) {
+  // what the garden's life was last worked out with: the areas, looks and body as text and as they came, the jobs by
+  // their id and the live track's pieces (see life)
+  let kept = {};
+  let jobs = new Map();
+  let pieces = [];
   return {
     api: () => art.ART_API,
     mower(key, o) {
@@ -247,8 +252,24 @@ function artOps(art) {
       return {key: icon.key, real: icon.real, svg: icon.draw()};
     },
     body: (sizes, keepRectangle) => art.sizesBody(sizes, keepRectangle) ?? null,
-    // the garden's life (ART_API 2): its layers as svg text in MowBite's order, null with none of it on
-    life: (input) => (art.gardenLife ? art.gardenLife(input) : null),
+    // the garden's life (ART_API 2): its layers as svg text in MowBite's order, null with none of it on. what's as it
+    // was (the areas, their looks, the body, a job, a piece of the track) goes in as the objects from the last time (in
+    // the mower's frame they come as copies), so the pictures find what they worked out for them
+    life(input) {
+      if (!art.gardenLife) return null;
+      const same = {};
+      for (const key of ['areas', 'looks', 'lookVariants', 'lookSizes', 'lookTurns', 'lookClosed', 'lookGrounds', 'body']) {
+        const text = JSON.stringify(input[key] ?? null);
+        if (kept[key]?.text !== text) kept[key] = {text, value: input[key]};
+        same[key] = kept[key].value;
+      }
+      const jobKey = (j) => `${j.job_id}|${j.timestamp}|${j.segments?.length}`;
+      jobs = new Map((input.jobs ?? []).map((j) => [jobKey(j), jobs.get(jobKey(j)) ?? j]));
+      const end = (p) => p[p.length - 1];
+      const samePiece = (a, b) => a && a.length === b.length && a[0].x === b[0].x && a[0].y === b[0].y && end(a).x === end(b).x && end(a).y === end(b).y;
+      pieces = (input.track ?? []).map((p, i) => (p.length && samePiece(pieces[i], p) ? pieces[i] : p));
+      return art.gardenLife({...input, ...same, jobs: [...jobs.values()], track: pieces});
+    },
     // the garden style's textures, fills and things in the app's own units (its 400 wide square, fit: where the map
     // lies in it), and the real edges in metres
     areas({areas, looks, lookVariants, lookSizes, lookTurns, lookClosed, lookGrounds, body, garden, uid, fit}) {
@@ -331,6 +352,8 @@ const GARDEN_UID = 'mbGardenUid';
 const GARDEN_KEEP = 4;
 // how long the map waits for more changes before it works out the garden (ms)
 const GARDEN_SETTLE = 300;
+// the garden's life is kept in the browser at most this often (ms)
+const LIFE_KEEP_EVERY = 60000;
 const gardenMemo = new Map();
 let gardenDb;
 
@@ -533,8 +556,25 @@ const SVG_ALLOWED = new Set(
   ).split(' '),
 );
 
+// the last svg texts cleaned: the garden's life comes again every few seconds while the mower drives with all but its
+// cut lawn as it was, only what's new is parsed
+const cleanedSvg = new Map();
+const CLEANED_KEEP = 32;
+
 function cleanSvg(text) {
   if (typeof text !== 'string' || !text) return '';
+  let clean = cleanedSvg.get(text);
+  if (clean === undefined) {
+    clean = cleanSvgText(text);
+    if (cleanedSvg.size >= CLEANED_KEEP) cleanedSvg.delete(cleanedSvg.keys().next().value);
+  } else {
+    cleanedSvg.delete(text);
+  }
+  cleanedSvg.set(text, clean);
+  return clean;
+}
+
+function cleanSvgText(text) {
   const doc = new DOMParser().parseFromString(`<svg xmlns="${svgNS}" xmlns:xlink="http://www.w3.org/1999/xlink">${text}</svg>`, 'image/svg+xml');
   const root = doc.documentElement;
   if (root.nodeName !== 'svg' || doc.getElementsByTagName('parsererror').length) return '';
@@ -660,6 +700,11 @@ const MAP_STYLE = `
 
   .map svg.dragging {
     cursor: grabbing;
+  }
+
+  /* the layers over the ground (see MowbiteMap): dragging and zooming go to the ground under them */
+  .map svg.layer {
+    pointer-events: none;
   }
 
   .mowArea {
@@ -792,7 +837,7 @@ const MAP_STYLE = `
     background: transparent;
   }
 
-  .map svg.garden {
+  .map svg.ground.garden {
     background: color-mix(in srgb, #8f8778 30%, transparent);
   }
 
@@ -1128,6 +1173,9 @@ function swathEnd(from, end, r) {
 
 // a track polyline takes this many points, then the next one goes on: a new point only redraws a short one
 const TRACK_CHUNK = 200;
+// points in a piece of the plan to do (setTodo) and of the track for the cut lawn (lifeInput)
+const TODO_PIECE = 40;
+const LIFE_PIECE = 400;
 // further than this the mower doesn't glide, it's put there (m)
 const JUMP = 5;
 // following the mower the map shows this many metres around it, like the app's overview, until zoomed
@@ -1194,31 +1242,63 @@ class EasedPose {
   }
 }
 
-const svgPath = (pts) => pts.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(3)} ${(-p.y).toFixed(3)}`).join('');
+const svgPath = (pts, digits = 3) => pts.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(digits)} ${(-p.y).toFixed(digits)}`).join('');
 
 const svgNS = 'http://www.w3.org/2000/svg';
+
+// sets an element's svg only when it changed: what stays as it was isn't painted again
+function setSvg(el, svg) {
+  if (el.svgText === svg) return;
+  el.svgText = svg;
+  el.innerHTML = svg;
+}
+
+// like setSvg, keeping the children that stayed the same: of the cut lawn only the piece that grew is painted again
+function morphSvg(el, svg) {
+  if (el.svgText === svg) return;
+  el.svgText = svg;
+  const next = document.createElementNS(svgNS, 'g');
+  next.innerHTML = svg;
+  morphChildren(el, next);
+}
+
+function morphChildren(el, next) {
+  const olds = [...el.childNodes];
+  const news = [...next.childNodes];
+  news.forEach((n, i) => {
+    const o = olds[i];
+    if (!o) return el.appendChild(n);
+    if (o.nodeType === 1 && n.nodeType === 1) {
+      if (o.outerHTML === n.outerHTML) return;
+      const same = o.localName === n.localName && o.attributes.length === n.attributes.length && [...n.attributes].every((a) => o.getAttribute(a.name) === a.value);
+      if (same && n.firstChild) return morphChildren(o, n);
+    } else if (o.nodeType === n.nodeType && o.nodeValue === n.nodeValue) {
+      return;
+    }
+    el.replaceChild(n, o);
+  });
+  for (const o of olds.slice(news.length)) o.remove();
+}
 
 class MowbiteMap {
   // the map's svg in a section with its zoom buttons. world coordinates in metres, y up: drawn with y flipped,
   // every line stays as wide on screen whatever the zoom (non-scaling strokes)
   constructor(section) {
     this.section = section;
+    // in layers like the app's MapView, one svg each: what changes often (the mower every frame, the track and the plan
+    // with every pose, the cut lawn every few seconds) is rastered again without the garden under or over it
+    const layer = (name, groups) =>
+      `<svg class="svg layer ${name}" xmlns="${svgNS}" preserveAspectRatio="xMidYMid meet">${groups.map((g) => `<g class="${g}"></g>`).join('')}</svg>`;
     section.innerHTML = `
-      <svg class="svg" xmlns="${svgNS}" preserveAspectRatio="xMidYMid meet">
+      <svg class="svg ground" xmlns="${svgNS}" preserveAspectRatio="xMidYMid meet">
         <g class="areas"></g>
-        <g class="docks"></g>
-        <g class="edges"></g>
-        <g class="leftovers"></g>
-        <g class="plan"></g>
-        <g class="swath"></g>
-        <g class="tracks"></g>
-        <g class="tight"></g>
-        <g class="mowerBodyLayer"></g>
-        <g class="mowerIcon"></g>
-        <g class="mowerTop"></g>
-        <g class="overLayer"></g>
-        <g class="underLayer"></g>
       </svg>
+      ${layer('lawnLayer', ['lawn'])}
+      ${layer('groundOver', ['areasOver', 'docks', 'edges', 'leftovers'])}
+      ${layer('live', ['plan', 'swath', 'tracks', 'tight'])}
+      ${layer('mowerLayer', ['mowerBodyLayer', 'mowerIcon', 'mowerTop'])}
+      ${layer('crowns', ['overLayer'])}
+      ${layer('under', ['underLayer'])}
       <div class="zoomButtons">
         <button data-zoom="in" title="+">${MAP_BUTTONS.plus}</button>
         <button data-zoom="out" title="-">${MAP_BUTTONS.minus}</button>
@@ -1226,15 +1306,19 @@ class MowbiteMap {
         <button data-zoom="fit" title="⛶">${MAP_BUTTONS.fit}</button>
       </div>`;
     this.svg = section.querySelector('svg');
+    this.svgs = [...section.querySelectorAll('svg.svg')];
     this.areas = section.querySelector('.areas');
+    // the cut lawn, and what lies over it of the areas (the obstacles' lawn, the life's things, stones and sky)
+    this.lawn = section.querySelector('.lawn');
+    this.areasOver = section.querySelector('.areasOver');
     this.docks = section.querySelector('.docks');
     this.edges = section.querySelector('.edges');
     this.tracks = section.querySelector('.tracks');
     this.planLayer = section.querySelector('.plan');
     this.leftoverLayer = section.querySelector('.leftovers');
     this.tightLayer = section.querySelector('.tight');
-    // the plan to do drawn, only drawn again when it changed
-    this.todo = '';
+    // the plan to do drawn in pieces (setTodo), by their keys
+    this.todoPieces = new Map();
     this.swath = section.querySelector('.swath');
     this.bodyLayer = section.querySelector('.mowerBodyLayer');
     this.mower = section.querySelector('.mowerIcon');
@@ -1242,9 +1326,12 @@ class MowbiteMap {
     // the garden's crowns and parasols over the mower, and its outline where they hide it (the app's covers)
     this.overLayer = section.querySelector('.overLayer');
     this.underLayer = section.querySelector('.underLayer');
+    this.underSvg = section.querySelector('svg.under');
     this.covers = [];
     this.body = null;
     this.points = [];
+    // the track in pieces for the cut lawn (lifeInput)
+    this.lifePieces = [];
     // the stretch with the blades on the strip is still growing along: its scan and its growing piece and ends
     this.stretch = null;
     // an old tablet's light card glides at fewer frames
@@ -1396,8 +1483,7 @@ class MowbiteMap {
   drawAreas() {
     const map = this.map;
     if (!map) {
-      this.areas.innerHTML = '';
-      this.edges.innerHTML = '';
+      for (const el of [this.areas, this.lawn, this.areasOver, this.edges]) setSvg(el, '');
       return;
     }
     const size = (a) => Math.abs((a.outline ?? []).reduce((sum, p, i, o) => sum + p.x * o[(i + 1) % o.length].y - o[(i + 1) % o.length].x * p.y, 0));
@@ -1442,34 +1528,46 @@ class MowbiteMap {
       });
       const edges = art?.edges;
       const isGarden = garden && !!art;
-      this.svg.classList.toggle('garden', isGarden);
+      // the garden's colors on every layer, its paving under the ground
+      for (const svg of this.svgs) svg.classList.toggle('garden', isGarden);
       // the page shows a little through the garden's paving, like in the app
       this.section.classList.toggle('gardenMap', isGarden);
       // the real edges in metres (the card's own loop) or in the 400 square (the app's garden)
       const inGrid = (svg) => (art?.grid ? `<g transform="${toMap}">${svg}</g>` : svg);
-      this.areas.innerHTML =
+      // each part only where it changed: the life comes again every few seconds while the mower drives, mostly with
+      // only the cut lawn grown a little
+      setSvg(
+        this.areas,
         (edges?.outside ? inGrid(`<path class="realGrass" d="${edges.outside}"/>`) : '') +
-        `<g transform="${toMap}">${garden ? (art?.defs ?? '') + (life?.defs ?? '') : ''}${drawn.join('')}${life?.lawn ?? ''}</g>` +
+          `<g transform="${toMap}">${garden ? (art?.defs ?? '') + (life?.defs ?? '') : ''}${drawn.join('')}</g>`,
+      );
+      morphSvg(this.lawn, life?.lawn ? `<g transform="${toMap}">${life.lawn}</g>` : '');
+      setSvg(
+        this.areasOver,
         (edges?.obstacles ? inGrid(`<path class="realGrass" d="${edges.obstacles}"/>`) : '') +
-        (life ? `<g transform="${toMap}">${life.things}${life.stones}${life.sky}</g>` : '');
-      this.edges.innerHTML = edges?.line && !life?.stones ? inGrid(`<path class="realEdge" d="${edges.line}"/>`) : '';
+          (life ? `<g transform="${toMap}">${life.things}${life.stones}${life.sky}</g>` : ''),
+      );
+      setSvg(this.edges, edges?.line && !life?.stones ? inGrid(`<path class="realEdge" d="${edges.line}"/>`) : '');
       // crowns and parasols over the mower (the life's canopies with it on), and where they hide it in metres
       const over = life ? (life.canopies ?? '') : garden ? Object.values(art?.over ?? {}).join('') : '';
-      this.overLayer.innerHTML = over ? `<g transform="${toMap}">${over}</g>` : '';
+      setSvg(this.overLayer, over ? `<g transform="${toMap}">${over}</g>` : '');
       const covers = garden ? ((life ? life.covers : art?.covers) ?? []) : [];
       const inMap = (x, y) => ({x: minX + (x - padX) / m, y: -(minY + (400 - y - padY) / m)});
       this.covers = covers.map((c) => ({...inMap(c.cx, c.cy), r: c.r / m, pts: c.pts?.map(([x, y]) => inMap(x, y))}));
-      this.underLayer.innerHTML = this.covers.length
-        ? `<defs><mask id="${uid}under" maskUnits="userSpaceOnUse" x="-10000" y="-10000" width="20000" height="20000">` +
-          this.covers
-            .map((c) =>
-              c.pts
-                ? `<polygon points="${c.pts.map((p) => `${p.x},${p.y}`).join(' ')}" fill="#fff"/>`
-                : `<circle cx="${c.x}" cy="${c.y}" r="${c.r}" fill="#fff"/>`,
-            )
-            .join('') +
-          `</mask></defs><g mask="url(#${uid}under)" class="mowerUnder"><polygon class="mowerUnderBody"/></g>`
-        : '';
+      setSvg(
+        this.underLayer,
+        this.covers.length
+          ? `<defs><mask id="${uid}under" maskUnits="userSpaceOnUse" x="-10000" y="-10000" width="20000" height="20000">` +
+            this.covers
+              .map((c) =>
+                c.pts
+                  ? `<polygon points="${c.pts.map((p) => `${p.x},${p.y}`).join(' ')}" fill="#fff"/>`
+                  : `<circle cx="${c.x}" cy="${c.y}" r="${c.r}" fill="#fff"/>`,
+              )
+              .join('') +
+            `</mask></defs><g mask="url(#${uid}under)" class="mowerUnder"><polygon class="mowerUnderBody"/></g>`
+          : '',
+      );
       this.drawMower();
       const growth = !!life?.parts?.growth;
       if (growth !== !!this.lifeGrowth) {
@@ -1516,7 +1614,11 @@ class MowbiteMap {
       }
       const lifeArt = await pictures.call('life', {...life, uid: GARDEN_UID}).catch(() => null);
       if (!current()) return;
-      if (lifeArt) void gardenPut(`life:${key}`, lifeArt);
+      // kept for the next page, while the mower drives once a minute
+      if (lifeArt && Date.now() - (this.lifeKeptAt ?? 0) > LIFE_KEEP_EVERY) {
+        this.lifeKeptAt = Date.now();
+        void gardenPut(`life:${key}`, lifeArt);
+      }
       show(art, lifeArt);
     } catch {
       if (current()) draw(null);
@@ -1528,9 +1630,17 @@ class MowbiteMap {
     const life = this.life;
     const parts = life?.garden;
     if (!garden || !parts || !Object.values(parts).some((on) => on === true)) return null;
-    // the live track in pieces of {x, y, b} like the app's, only for the cuts
-    const track = [];
-    if (parts.growth) for (let i = 0; i < this.points.length; i += 400) track.push(this.points.slice(i, i + 401));
+    // the live track in pieces of {x, y, b} like the app's, only for the cuts. a full piece stays the same array, the
+    // pictures keep what they worked out for it and only the growing one is worked out again
+    const track = parts.growth ? this.lifePieces : [];
+    if (parts.growth) {
+      const count = Math.ceil(this.points.length / LIFE_PIECE);
+      track.length = Math.min(track.length, count);
+      for (let n = 0; n < count; n++) {
+        if (track[n]?.length === LIFE_PIECE + 1) continue;
+        track[n] = this.points.slice(n * LIFE_PIECE, (n + 1) * LIFE_PIECE + 1);
+      }
+    }
     return {
       areas: this.map.areas ?? [],
       garden: parts,
@@ -1566,6 +1676,7 @@ class MowbiteMap {
       this.tracks.innerHTML = '';
       this.runs = [];
       this.points = [];
+      this.lifePieces = [];
     }
     const added = this.points.length;
     for (const [x, y, blades] of update.points) this.points.push({x, y, b: !!blades});
@@ -1590,15 +1701,35 @@ class MowbiteMap {
     else this.growSwath(added);
   }
 
-  // what's still to do of the area being mowed, from the app's plan progress (a list of point lists)
+  // what's still to do of the area being mowed, from the app's plan progress (a list of point lists). in pieces of
+  // TODO_PIECE points counted from the end of each path (and the paths from the last, like the app): while the mower
+  // drives only the piece it's on changes, one path of all of it was rastered again with every pose
   setTodo(todo) {
-    const d = (todo ?? [])
-      .filter((p) => p.length > 1)
-      .map((p) => p.map((q, i) => `${i ? 'L' : 'M'}${q.x.toFixed(2)} ${(-q.y).toFixed(2)}`).join(''))
-      .join('');
-    if (d === this.todo) return;
-    this.todo = d;
-    this.planLayer.innerHTML = d ? `<path class="planTodo" d="${d}"/>` : '';
+    const paths = (todo ?? []).filter((p) => p.length > 1);
+    const pieces = new Map();
+    paths.forEach((pts, i) => {
+      for (let n = 0, end = pts.length; end > 1; n++, end -= TODO_PIECE) pieces.set(`${paths.length - i}:${n}`, [pts, Math.max(0, end - TODO_PIECE - 1), end]);
+    });
+    for (const [key, el] of this.todoPieces) {
+      if (pieces.has(key)) continue;
+      el.remove();
+      this.todoPieces.delete(key);
+    }
+    for (const [key, [pts, from, to]] of pieces) {
+      let el = this.todoPieces.get(key);
+      if (!el) {
+        el = document.createElementNS(svgNS, 'path');
+        el.setAttribute('class', 'planTodo');
+        this.planLayer.appendChild(el);
+        this.todoPieces.set(key, el);
+      }
+      // the same ends and as many points: the piece as it was (it comes again with every update)
+      const [a, b] = [pts[from], pts[to - 1]];
+      const ends = `${to - from}|${a.x},${a.y}|${b.x},${b.y}`;
+      if (el.dataset.ends === ends) continue;
+      el.dataset.ends = ends;
+      el.setAttribute('d', svgPath(pts.slice(from, to), 2));
+    }
   }
 
   // what the last job left uncut, as the planner found it
@@ -1799,11 +1930,14 @@ class MowbiteMap {
     if (zoomed || !drawn || Math.abs(dx) > view.w * OVERSCAN * OVERSCAN_USED || Math.abs(dy) > view.h * OVERSCAN * OVERSCAN_USED) {
       const grow = 1 + 2 * OVERSCAN;
       this.drawn = {x: view.x - view.w * OVERSCAN, y: view.y - view.h * OVERSCAN, w: view.w * grow, h: view.h * grow};
-      this.svg.setAttribute('viewBox', `${this.drawn.x} ${this.drawn.y} ${this.drawn.w} ${this.drawn.h}`);
-      this.svg.style.transform = '';
+      for (const svg of this.svgs) {
+        svg.setAttribute('viewBox', `${this.drawn.x} ${this.drawn.y} ${this.drawn.w} ${this.drawn.h}`);
+        svg.style.transform = '';
+      }
     } else {
       const k = this.k;
-      this.svg.style.transform = `translate(${(dx * k).toFixed(1)}px, ${(dy * k).toFixed(1)}px)`;
+      const slid = `translate(${(dx * k).toFixed(1)}px, ${(dy * k).toFixed(1)}px)`;
+      for (const svg of this.svgs) svg.style.transform = slid;
     }
     // icons that keep their size on screen follow the zoom, moving the view leaves them as they are
     if (zoomed) {
@@ -1854,6 +1988,7 @@ class MowbiteMap {
       if (this.mower.firstChild) this.mower.innerHTML = '';
       this.mower.dataset.key = '';
       if (this.bodyLayer.firstChild) this.bodyLayer.innerHTML = '';
+      this.underSvg.style.display = 'none';
       this.drawBlade(null);
       return;
     }
@@ -1871,9 +2006,22 @@ class MowbiteMap {
     // svg y points down, so the map's ccw heading becomes a cw rotation
     const deg = (-pose.heading * 180) / Math.PI;
 
-    // its outline where a crown or a parasol hides it
+    // its outline where a crown or a parasol hides it, only while it's near one (within its length and a metre): the
+    // layer isn't rastered again for every frame the mower drives elsewhere
     const under = this.underLayer.querySelector('.mowerUnderBody');
-    if (under && shape) under.setAttribute('points', shape.corners.map((c) => `${c.x},${-c.y}`).join(' '));
+    const reach = (body ? Math.max(body.front + body.rear, body.width) : MOWER_SIZE) + 1;
+    const near =
+      !!(under && shape) &&
+      this.covers.some((c) =>
+        c.pts
+          ? pose.x > Math.min(...c.pts.map((q) => q.x)) - reach &&
+            pose.x < Math.max(...c.pts.map((q) => q.x)) + reach &&
+            -pose.y > Math.min(...c.pts.map((q) => q.y)) - reach &&
+            -pose.y < Math.max(...c.pts.map((q) => q.y)) + reach
+          : Math.hypot(c.x - pose.x, c.y + pose.y) < c.r + reach,
+      );
+    if (this.underSvg.style.display !== (near ? '' : 'none')) this.underSvg.style.display = near ? '' : 'none';
+    if (near) under.setAttribute('points', shape.corners.map((c) => `${c.x},${-c.y}`).join(' '));
     // the body as it really is, under the icon
     if (shape) {
       if (!this.bodyLayer.firstElementChild) this.bodyLayer.innerHTML = '<polygon class="mowerBody"/>';
