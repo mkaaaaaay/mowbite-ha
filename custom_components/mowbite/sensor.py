@@ -32,7 +32,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import dt as dt_util
 
 from . import MowbiteConfigEntry, MowbiteData
-from .app import SKIP_REASONS, AppStatus, next_start, part_hours_left, stats_since
+from .app import SKIP_REASONS, AppStatus, next_start, part_hours_left, skip_reason, stats_since
 from .entity import MowbiteEntity, async_add_when_there
 from .features import APP, EVENTS, MAP, RPC
 from .mower import KEY_STATE, Mower
@@ -456,9 +456,7 @@ DATA_SENSORS = (
         translation_key="schedule_skipped",
         device_class=SensorDeviceClass.ENUM,
         options=SKIP_REASONS,
-        value_fn=lambda data: (
-            reason if (reason := (data.status.schedule_log or {}).get("skip_reason")) in SKIP_REASONS else None
-        ),
+        value_fn=lambda data: skip_reason(data.status.schedule_log),
         attributes_fn=lambda data: {
             "time": t.isoformat() if (t := _timestamp((data.status.schedule_log or {}).get("skipped"))) else None
         },

@@ -155,7 +155,8 @@ SCHEDULE_EVERY = 5
 BATTERY_EVERY = 15
 VERSION_EVERY = 60
 
-# what the schedule log says when it didn't start, the reason after "skip_"
+# what the schedule log says when it didn't start, the reason after "skip_". other: one this list doesn't know yet (a
+# newer app), rather than saying nothing
 SKIP_REASONS = [
     "rain",
     "forecast",
@@ -169,6 +170,8 @@ SKIP_REASONS = [
     "end",
     "gone",
     "no_area",
+    "hold",
+    "other",
 ]
 
 
@@ -313,6 +316,14 @@ def parse_schedule_log(text: str) -> dict[str, Any]:
             out["skipped"] = t
             out["skip_reason"] = words[1][len("skip_") :]
     return out
+
+
+def skip_reason(log: dict[str, Any] | None) -> str | None:
+    """Why the newest start didn't happen, as one of SKIP_REASONS, None when none was skipped."""
+    reason = (log or {}).get("skip_reason")
+    if not reason:
+        return None
+    return reason if reason in SKIP_REASONS else "other"
 
 
 # how far back the longest run counts (seconds)

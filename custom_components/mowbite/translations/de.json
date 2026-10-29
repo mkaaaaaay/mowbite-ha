@@ -321,7 +321,9 @@
           "cold": "Zu kalt",
           "end": "Endzeit beim Laden erreicht",
           "gone": "Startzeit geändert oder entfernt",
-          "no_area": "Keine Fläche mehr zu mähen"
+          "no_area": "Keine Fläche mehr zu mähen",
+          "hold": "Update lief noch",
+          "other": "Anderer Grund"
         },
         "state_attributes": {
           "time": {

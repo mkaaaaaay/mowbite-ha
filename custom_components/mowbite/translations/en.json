@@ -321,7 +321,9 @@
           "cold": "Too cold",
           "end": "End time reached while charging",
           "gone": "Start time changed or removed",
-          "no_area": "No area left to mow"
+          "no_area": "No area left to mow",
+          "hold": "Update in progress",
+          "other": "Other reason"
         },
         "state_attributes": {
           "time": {

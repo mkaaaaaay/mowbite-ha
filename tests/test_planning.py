@@ -26,6 +26,7 @@ from custom_components.mowbite.app import (
     parse_schedule,
     parse_schedule_log,
     parse_system,
+    skip_reason,
 )
 from custom_components.mowbite.const import CONF_APP_URL
 from custom_components.mowbite.mower import Mower, RpcError
@@ -192,8 +193,13 @@ def test_app_status_texts() -> None:
     log = parse_schedule_log("100 started 100\n200 skipped_area x\n300 skip_rain\n400 started 80\n")
     assert log == {"started": 400, "skipped": 300, "skip_reason": "rain"}
     # every reason the app's scheduler logs, each with its words in both languages
-    for reason in ("cold", "end", "gone", "no_area"):
-        assert parse_schedule_log(f"500 skip_{reason} 4\n")["skip_reason"] in SKIP_REASONS
+    for reason in ("cold", "end", "gone", "no_area", "hold"):
+        assert skip_reason(parse_schedule_log(f"500 skip_{reason} 4\n")) == reason
+    # one a newer app logs that this doesn't know yet is another reason, not none, the log keeps what it said
+    log = parse_schedule_log("500 waiting_hold\n600 skip_flood\n")
+    assert log["skip_reason"] == "flood" and skip_reason(log) == "other"
+    assert skip_reason(parse_schedule_log("100 started 100\n200 waiting_hold\n")) is None
+    assert skip_reason(None) is None
     for lang in ("en", "de"):
         words = json.loads((TRANSLATIONS / f"{lang}.json").read_text(encoding="utf-8"))
         assert set(words["entity"]["sensor"]["schedule_skipped"]["state"]) == set(SKIP_REASONS)
