@@ -5,10 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from pytest_homeassistant_custom_component.common import MockConfigEntry
-
 from homeassistant.components.lovelace.const import LOVELACE_DATA
 from homeassistant.core import HomeAssistant
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.mowbite import BLUEPRINT_FILE, BLUEPRINT_SOURCE, CARD_PATH, install_blueprint
 from custom_components.mowbite.mower import Mower

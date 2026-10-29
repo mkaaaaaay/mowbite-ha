@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Generator
 import json
 import re
+from collections.abc import Generator
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
-
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.mowbite.const import CONF_PREFIX, DOMAIN
 from custom_components.mowbite.mower import Mower

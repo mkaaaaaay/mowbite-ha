@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from datetime import date, datetime, timedelta
 import json
 import logging
 import re
 import time
+from collections.abc import Callable
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import aiohttp
-
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_interval

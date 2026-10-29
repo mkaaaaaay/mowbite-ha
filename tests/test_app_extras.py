@@ -5,12 +5,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from pytest_homeassistant_custom_component.common import MockConfigEntry
-from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
-
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
+from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
 from custom_components.mowbite.app import (
     next_start,
@@ -21,7 +20,6 @@ from custom_components.mowbite.app import (
     stats_since,
 )
 from custom_components.mowbite.const import CONF_APP_URL
-
 from custom_components.mowbite.mower import Mower
 
 from .conftest import ROBOT_STATE, app_status, send

@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from collections import deque
-from collections.abc import Callable
 import json
 import logging
 import math
 import time
-from typing import Any
 import uuid
+from collections import deque
+from collections.abc import Callable
+from typing import Any
 
 import aiomqtt
 

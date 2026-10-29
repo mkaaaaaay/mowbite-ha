@@ -5,10 +5,9 @@ from __future__ import annotations
 from datetime import timedelta
 
 import pytest
-from pytest_homeassistant_custom_component.common import async_fire_time_changed
-
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
+from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 from custom_components.mowbite.geo import map_to_latlon, to_utm, utm_zone
 from custom_components.mowbite.mower import Mower

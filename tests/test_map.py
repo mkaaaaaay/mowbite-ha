@@ -3,18 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
 import json
+from datetime import timedelta
 from typing import Any
 from unittest.mock import AsyncMock, patch
-
-from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
-from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
-from pytest_homeassistant_custom_component.typing import WebSocketGenerator
 
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.util import dt as dt_util
+from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
+from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
+from pytest_homeassistant_custom_component.typing import WebSocketGenerator
 
 from custom_components.mowbite.app import WITHOUT_APP
 from custom_components.mowbite.const import CONF_APP_URL, CONF_MAP, CONF_MOWER, CONF_SIZES, MOWER_MODELS
