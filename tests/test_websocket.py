@@ -150,6 +150,22 @@ async def test_rpc_reads_only(hass: HomeAssistant, hass_ws_client: WebSocketGene
     assert asked == [("events.history", {"date": "20261018"})]
 
 
+async def test_rpc_plan_waits_longer(hass: HomeAssistant, hass_ws_client: WebSocketGenerator, mower: Mower) -> None:
+    """A plan the planner works out anew takes longer than the rest, as long as the app gives it."""
+    timeouts = {}
+
+    async def rpc(method, params=None, timeout=20):
+        timeouts[method] = timeout
+        return {}
+
+    mower.async_rpc = rpc  # type: ignore[method-assign]
+    client = await hass_ws_client(hass)
+    for method in ("planner.plan", "planner.settings"):
+        await client.send_json_auto_id({"type": "mowbite/rpc", "entity_id": MOWER, "method": method, "params": {}})
+        assert (await client.receive_json())["success"]
+    assert timeouts == {"planner.plan": 90, "planner.settings": 30}
+
+
 async def test_rpc_no_mowing_plan_with_the_planner(
     hass: HomeAssistant, hass_ws_client: WebSocketGenerator, entry: MockConfigEntry, mower: Mower
 ) -> None:

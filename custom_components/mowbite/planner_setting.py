@@ -28,7 +28,10 @@ class MowbitePlannerSetting(MowbiteEntity):
     @property
     def _info(self) -> dict[str, Any] | None:
         info = (self._planning.settings or {}).get(self._setting)
-        return info if isinstance(info, dict) and info.get("settable") else None
+        if not isinstance(info, dict) or not info.get("settable"):
+            return None
+        # one the planner has but doesn't go by now ("ignored" with the reason why) would change nothing
+        return info if info.get("ignored") in (None, False) else None
 
     @property
     def available(self) -> bool:

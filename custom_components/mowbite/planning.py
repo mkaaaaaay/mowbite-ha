@@ -46,12 +46,13 @@ LEFTOVERS_BEFORE = 30
 LEFTOVERS_RECHECK = 10
 HISTORY_LIST = "events.history.list"
 
-# a plan takes a while when the planner has to plan it anew
-PLAN_TIMEOUT = 120
+# a plan takes a while when the planner has to plan it anew, after its start it plans every area ahead first
+PLAN_TIMEOUT = 300
 # after docking the planner first reads the finished job's log
 AFTER_DOCKING = 30
-# an area whose plan didn't come is asked again after this long at the earliest (seconds)
+# an area whose plan didn't come is asked again after this long at the earliest (seconds), on its own that many times
 RETRY_PLAN = 60
+RETRIES = 5
 
 
 def mow_areas(map_data: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -183,6 +184,9 @@ class Planning:
         self._plans_for: int | None = None
         self._asking: set[str] = set()
         self._failed: dict[str, float] = {}
+        # area id -> how often its plan was asked again on its own for this map, and the wait for the next time
+        self._retries: dict[str, int] = {}
+        self._retrying: dict[str, Callable[[], None]] = {}
         # (job id, area id) of areas a job mows only the leftovers of, until the job ends. a job that heads home
         # (rain, battery) and comes back starts the area again without fetching its plan anew, it stays a leftover run
         self._leftover_runs: set[tuple[str, str]] = set()
@@ -213,6 +217,9 @@ class Planning:
                 remove()
             if self._after_docking is not None:
                 self._after_docking()
+            for cancel in self._retrying.values():
+                cancel()
+            self._retrying.clear()
 
         return stop
 
@@ -483,18 +490,19 @@ class Planning:
                 self._note_problem(event)
 
     async def _async_plans(self) -> None:
-        """Every active area's plan once per map, for the whole job's time and area. Not while mowing: a plan the
-        planner hasn't kept costs the mower's computer time, the area being mowed is asked on its own"""
+        """Every active area's plan once per map, for the whole job's time and area, after a job the ones that didn't
+        come. Not while mowing: a plan the planner hasn't kept costs the mower's computer time, the area being mowed
+        is asked on its own"""
         method = self.plan_method
         mower = self._mower
         if method is None or (mower.state or {}).get("current_state") == "MOWING":
             return
-        if self._plans_for == mower.map_version:
-            return
-        self._plans_for = mower.map_version
-        self.plans = {}
+        if self._plans_for != mower.map_version:
+            self._plans_for = mower.map_version
+            self.plans = {}
+            self._retries = {}
         for area in mow_areas(mower.map):
-            if is_active(area) and area.get("id"):
+            if is_active(area) and area.get("id") and area["id"] not in self.plans:
                 await self._async_plan(area["id"])
 
     async def _async_plan(self, area_id: str) -> None:
@@ -511,11 +519,38 @@ class Planning:
             self._asking.discard(area_id)
         if plan is None:
             self._failed[area_id] = time.monotonic()
+            self._retry(area_id)
             return
         self._failed.pop(area_id, None)
+        self._retries.pop(area_id, None)
         self.plans[area_id] = plan
         self.version += 1
         self._mower.notify(KEY_PLANNING)
+
+    @callback
+    def _retry(self, area_id: str) -> None:
+        """Asks a plan that didn't come again after a while, a few times: the planner may have been planning every
+        area ahead after its start, the next change of the map or the next job is too far off"""
+        tries = self._retries.get(area_id, 0)
+        if tries >= RETRIES or area_id in self._retrying:
+            return
+        self._retries[area_id] = tries + 1
+
+        @callback
+        def again(_now: Any) -> None:
+            self._retrying.pop(area_id, None)
+            mower = self._mower
+            # not while mowing, the area being mowed is asked on its own then, and not an area the map lost
+            if area_id in self.plans or not self._ready or not mower.connected:
+                return
+            if (mower.state or {}).get("current_state") == "MOWING":
+                return
+            if not any(area.get("id") == area_id and is_active(area) for area in mow_areas(mower.map)):
+                return
+            self._failed.pop(area_id, None)
+            self._ask(self._async_plan(area_id))
+
+        self._retrying[area_id] = async_call_later(self._hass, RETRY_PLAN, again)
 
     async def _async_leftover_run(self, area_id: str, job_id: str, t: Any) -> None:
         """Whether the area started is only its leftovers, the planner's log says so when mower_logic got the plan."""

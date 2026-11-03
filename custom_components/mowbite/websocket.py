@@ -26,7 +26,7 @@ from .mower import (
     CannotConnect,
     RpcError,
 )
-from .planning import PLAN
+from .planning import PLAN, PLANNER_PLAN
 
 if TYPE_CHECKING:
     from . import MowbiteData
@@ -61,6 +61,8 @@ READ_RPC = {
     PLAN,
 }
 RPC_TIMEOUT = 30
+# a plan the planner has to work out anew takes longer, the app gives it as long
+PLAN_RPC_TIMEOUT = 90
 
 # robot_state comes about once a second, the card gets at most two updates a second
 SEND_INTERVAL = 0.5
@@ -290,7 +292,7 @@ async def ws_rpc(hass: HomeAssistant, connection: websocket_api.ActiveConnection
         connection.send_error(msg["id"], "not_allowed", f"{method} isn't read only")
         return
     try:
-        result = await data.mower.async_rpc(method, params, RPC_TIMEOUT)
+        result = await data.mower.async_rpc(method, params, PLAN_RPC_TIMEOUT if method == PLANNER_PLAN else RPC_TIMEOUT)
     except RpcError as err:
         # the json-rpc code goes along, the card tells a method the mower doesn't have (-32601) from a failure
         connection.send_error(msg["id"], f"rpc_{err.code}" if err.code is not None else "rpc_error", str(err))

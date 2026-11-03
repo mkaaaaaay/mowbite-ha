@@ -18,6 +18,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry, async_
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 from pytest_homeassistant_custom_component.typing import WebSocketGenerator
 
+from custom_components.mowbite import planning as planning_module
 from custom_components.mowbite.app import (
     SKIP_REASONS,
     parse_battery,
@@ -376,6 +377,86 @@ async def test_setting_changes_while_idle(hass: HomeAssistant, entry: MockConfig
     assert hass.states.get("select.openmower_fill_pattern").state == "crosshatch"
     # the plans again, they change with the setting
     assert any(method == "planner.plan" for method, _ in rpc.calls)
+
+
+async def test_plan_asked_again(hass: HomeAssistant, entry: MockConfigEntry, no_connection: None, freezer: Any) -> None:
+    """A plan that didn't come (the planner still planning every area ahead after its start) is asked again on its
+    own, not only with the next map or job."""
+    late = {"back": 1}
+
+    def planner_plan(params: dict[str, Any]) -> dict[str, Any]:
+        if late.get(params["area_id"]):
+            late[params["area_id"]] -= 1
+            raise TimeoutError
+        return PLANNER_ANSWERS["planner.plan"](params)
+
+    rpc = FakeRpc({**PLANNER_ANSWERS, "planner.plan": planner_plan})
+    mower = await setup_mower(hass, entry, rpc)
+    send(mower, "map/json", MAP)
+    await hass.async_block_till_done()
+    assert hass.states.get("sensor.openmower_duration_for_all_areas").state == "unknown"
+
+    freezer.tick(timedelta(seconds=61))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert [params["area_id"] for method, params in rpc.calls if method == "planner.plan"] == ["front", "back", "back"]
+    # robot_state again, the old one went stale meanwhile
+    send(mower, "robot_state/json", ROBOT_STATE)
+    await hass.async_block_till_done()
+    assert hass.states.get("sensor.openmower_duration_for_all_areas").state == "60"
+
+
+async def test_plan_asked_again_a_few_times(
+    hass: HomeAssistant, entry: MockConfigEntry, no_connection: None, freezer: Any
+) -> None:
+    """One that never comes is asked a few times, then only after the next job, and not while mowing."""
+    late = {"back": 100}
+
+    def planner_plan(params: dict[str, Any]) -> dict[str, Any]:
+        if late.get(params["area_id"]):
+            late[params["area_id"]] -= 1
+            raise TimeoutError
+        return PLANNER_ANSWERS["planner.plan"](params)
+
+    def asked() -> int:
+        return sum(1 for method, params in rpc.calls if method == "planner.plan" and params["area_id"] == "back")
+
+    rpc = FakeRpc({**PLANNER_ANSWERS, "planner.plan": planner_plan})
+    mower = await setup_mower(hass, entry, rpc)
+    send(mower, "map/json", MAP)
+    await hass.async_block_till_done()
+    for _ in range(planning_module.RETRIES + 2):
+        freezer.tick(timedelta(seconds=61))
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+    assert asked() == 1 + planning_module.RETRIES
+
+    # a job: the area isn't asked while mowing, after docking it is
+    send(mower, "robot_state/json", {**ROBOT_STATE, "current_state": "MOWING"})
+    await hass.async_block_till_done()
+    send(mower, "robot_state/json", ROBOT_STATE)
+    send(mower, "events/json", {"type": "DOCKED", "t": 3, "id": "d1"})
+    await hass.async_block_till_done()
+    assert asked() == 1 + planning_module.RETRIES
+    late["back"] = 0
+    freezer.tick(timedelta(seconds=31))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert asked() == 2 + planning_module.RETRIES
+    send(mower, "robot_state/json", ROBOT_STATE)
+    await hass.async_block_till_done()
+    assert hass.states.get("sensor.openmower_duration_for_all_areas").state == "60"
+
+
+async def test_ignored_setting(hass: HomeAssistant, entry: MockConfigEntry, no_connection: None) -> None:
+    """A setting the planner has but doesn't go by now ("ignored", with the reason) would change nothing."""
+    settings = copy.deepcopy(SETTINGS)
+    settings["settings"]["fill_pattern"]["ignored"] = "slic3r plans"
+    mower = await setup_mower(hass, entry, FakeRpc({**PLANNER_ANSWERS, "planner.settings": settings}))
+    send(mower, "map/json", MAP)
+    await hass.async_block_till_done()
+    assert hass.states.get("select.openmower_fill_pattern").state == "unavailable"
+    assert hass.states.get("number.openmower_outline_loops").state == "2"
 
 
 async def test_mow_leftovers(hass: HomeAssistant, entry: MockConfigEntry, no_connection: None) -> None:
