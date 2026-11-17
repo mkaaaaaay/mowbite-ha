@@ -181,7 +181,8 @@
         "state": {
           "auto": "Automatic",
           "ccw": "Counterclockwise",
-          "cw": "Clockwise"
+          "cw": "Clockwise",
+          "random": "Random"
         }
       },
       "planner_perimeter_order": {

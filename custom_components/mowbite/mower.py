@@ -153,6 +153,13 @@ def _json(payload: bytes | bytearray | str) -> Any:
         return None
 
 
+def finite_number(value: Any) -> float | None:
+    """A finite number, not a bool."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+    return float(value)
+
+
 def _value(payload: bytes | bytearray | str) -> float | str:
     text = payload.decode(errors="replace") if isinstance(payload, (bytes, bytearray)) else str(payload)
     try:
@@ -359,7 +366,11 @@ class Mower:
                     delay = RECONNECT_MIN
                     _LOGGER.debug("Connected to %s", self.host)
                     async for message in client.messages:
-                        self.handle(str(message.topic), message.payload)
+                        try:
+                            self.handle(str(message.topic), message.payload)
+                        except Exception:
+                            # one message it can't make sense of doesn't end the connection
+                            _LOGGER.exception("Can't handle a message from %s on %s", self.host, message.topic)
             except aiomqtt.MqttError as err:
                 if self._connected:
                     _LOGGER.info("Lost the connection to %s: %s", self.host, err)
@@ -424,18 +435,22 @@ class Mower:
                     self._event(event)
         elif topic == TOPIC_POSITION:
             data = _json(payload)
-            if not isinstance(data, dict) or not isinstance(data.get("x"), (int, float)):
+            if not isinstance(data, dict) or (x := finite_number(data.get("x"))) is None:
                 return
-            attributes = data.get("attributes") or {}
-            job_id = attributes.get("job_id") or ""
+            y = finite_number(data.get("y")) or 0.0
+            attributes = data.get("attributes")
+            if not isinstance(attributes, dict):
+                attributes = {}
+            job_id = attributes.get("job_id")
+            job_id = job_id if isinstance(job_id, str) else ""
             self.position = {
-                "x": data["x"],
-                "y": data.get("y", 0),
-                "heading": data.get("heading", 0),
+                "x": x,
+                "y": y,
+                "heading": finite_number(data.get("heading")) or 0.0,
                 "blades": bool(attributes.get("blades")),
                 "job_id": job_id,
             }
-            self.track.add(data["x"], data.get("y", 0), bool(attributes.get("blades")), job_id)
+            self.track.add(x, y, bool(attributes.get("blades")), job_id)
             if job_id and job_id != self._seeded:
                 self._seed(job_id)
             self._notify(KEY_POSITION)

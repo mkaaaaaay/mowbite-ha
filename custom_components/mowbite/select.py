@@ -21,7 +21,7 @@ SELECTS = {
     "lane_order": (["snake", "skip"], False),
     "route_order": (["nearest", "optimized"], False),
     "perimeter_order": (["first", "last"], False),
-    "perimeter_direction": (["auto", "ccw", "cw"], False),
+    "perimeter_direction": (["auto", "ccw", "cw", "random"], False),
 }
 
 

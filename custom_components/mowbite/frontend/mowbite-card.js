@@ -550,9 +550,16 @@ function cleanCovers(covers) {
 const SVG_ALLOWED = new Set(
   (
     'g path circle ellipse rect line polyline polygon defs linearGradient radialGradient stop pattern clipPath mask ' +
-    'symbol use text tspan title desc animate animateTransform animateMotion set filter feGaussianBlur feOffset ' +
+    'symbol use text tspan title desc animate animateTransform filter feGaussianBlur feOffset ' +
     'feMerge feMergeNode feFlood feComposite feColorMatrix feBlend feMorphology feDropShadow feTurbulence ' +
     'feDisplacementMap marker'
+  ).split(' '),
+);
+// what an animation may change, never a link, a handler or a style
+const SVG_ANIMATED = new Set(
+  (
+    'transform opacity fill stroke d cx cy r rx ry x y width height points stroke-width stroke-opacity fill-opacity ' +
+    'stroke-dashoffset offset stop-color stop-opacity'
   ).split(' '),
 );
 
@@ -579,14 +586,17 @@ function cleanSvgText(text) {
   const root = doc.documentElement;
   if (root.nodeName !== 'svg' || doc.getElementsByTagName('parsererror').length) return '';
   for (const el of [...root.querySelectorAll('*')]) {
-    if (!SVG_ALLOWED.has(el.localName) || el.namespaceURI !== svgNS) {
+    const animation = el.localName === 'animate' || el.localName === 'animateTransform';
+    if (!SVG_ALLOWED.has(el.localName) || el.namespaceURI !== svgNS || (animation && !SVG_ANIMATED.has(el.getAttribute('attributeName')))) {
       el.remove();
       continue;
     }
     for (const attr of [...el.attributes]) {
       const name = attr.name.toLowerCase();
       const value = attr.value;
-      const local = /url\((?!\s*['"]?#)/i.test(value) || /javascript:|data:|expression\(|@import/i.test(value);
+      // browsers drop whitespace and control characters inside a url scheme
+      const flat = value.replace(/[\s\u0000-\u001f]/g, '');
+      const local = /url\((?!['"]?#)/i.test(flat) || /javascript:|data:|expression\(|@import/i.test(flat);
       if (name.startsWith('on') || local || ((name === 'href' || name === 'xlink:href') && !value.startsWith('#'))) {
         el.removeAttribute(attr.name);
       }

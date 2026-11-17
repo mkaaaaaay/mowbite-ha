@@ -6,6 +6,7 @@ import copy
 import json
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -18,7 +19,10 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry, async_
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 from pytest_homeassistant_custom_component.typing import WebSocketGenerator
 
+from custom_components.mowbite import mower as mower_module
 from custom_components.mowbite import planning as planning_module
+from custom_components.mowbite import select as select_module
+from custom_components.mowbite import sensor as sensor_module
 from custom_components.mowbite.app import (
     SKIP_REASONS,
     parse_battery,
@@ -168,6 +172,17 @@ def test_lawn_area_from_the_map() -> None:
     # a decoration is only a picture in MowBite, the mower mows under it (and a type it doesn't know changes nothing)
     decor = {"id": "bed", "properties": {"name": "Bed", "type": "decor"}, "outline": square(2, 2, 3)}
     assert lawn_area({"areas": [*MAP["areas"], decor]}) == pytest.approx(100 + 25 - 1)
+    # an obstacle switched off is mowed over, one across the area's edge isn't taken off
+    off = {"id": "pond", "properties": {"name": "Pond", "type": "obstacle", "active": False}, "outline": square(4, 4, 2)}
+    across = {"id": "hedge", "properties": {"name": "Hedge", "type": "obstacle"}, "outline": square(9, 4, 2)}
+    assert lawn_area({"areas": [*MAP["areas"], off, across]}) == pytest.approx(100 + 25 - 1)
+
+
+def test_percent_takes_only_finite_numbers() -> None:
+    value = sensor_module._percent("battery_percentage")
+    for bad in (float("nan"), float("inf"), True, "0.5", None):
+        assert value(SimpleNamespace(state={"battery_percentage": bad})) is None, bad
+    assert value(SimpleNamespace(state={"battery_percentage": 0.834})) == 83
 
 
 def test_planner_sizes() -> None:
@@ -292,6 +307,41 @@ async def test_progress_without_the_planner(hass: HomeAssistant, entry: MockConf
     await hass.async_block_till_done()
     assert hass.states.get("sensor.openmower_area_progress").state == "50"
     assert hass.states.get("sensor.openmower_current_area").state == "Front"
+
+
+async def test_methods_asked_again_until_they_come(
+    hass: HomeAssistant, entry: MockConfigEntry, no_connection: None, freezer: Any
+) -> None:
+    """The broker was there before ROS: rpc.methods is asked again when the mower comes back or boots."""
+    answers = dict(PLANNER_ANSWERS)
+    methods = answers.pop("rpc.methods")
+    rpc = FakeRpc(answers)
+    mower = await setup_mower(hass, entry, rpc)
+    assert hass.states.get("select.openmower_fill_pattern") is None
+    asked = len([method for method, _ in rpc.calls if method == "rpc.methods"])
+
+    # robot_state went quiet and came again
+    rpc.answers["rpc.methods"] = methods
+    freezer.tick(timedelta(seconds=mower_module.STALE_AFTER + 11))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    send(mower, "robot_state/json", ROBOT_STATE)
+    await hass.async_block_till_done()
+    assert len([method for method, _ in rpc.calls if method == "rpc.methods"]) == asked + 1
+    assert hass.states.get("select.openmower_fill_pattern").state == "lanes"
+
+    # ROS booted anew: asked again even though the methods are known
+    send(mower, "events/json", {"type": "BOOTED", "t": 5, "id": "boot"})
+    await hass.async_block_till_done()
+    assert len([method for method, _ in rpc.calls if method == "rpc.methods"]) == asked + 2
+
+
+def test_every_choice_has_words() -> None:
+    for lang in ("en", "de"):
+        words = json.loads((TRANSLATIONS / f"{lang}.json").read_text(encoding="utf-8"))["entity"]["select"]
+        for setting, (choices, _) in select_module.SELECTS.items():
+            assert set(words[f"planner_{setting}"]["state"]) == set(choices), (lang, setting)
+    assert "random" in select_module.SELECTS["perimeter_direction"][0]
 
 
 async def test_with_the_planner(hass: HomeAssistant, entry: MockConfigEntry, no_connection: None, freezer: Any) -> None:

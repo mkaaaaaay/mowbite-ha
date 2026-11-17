@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+import asyncio
+import json
+from collections.abc import AsyncIterator
+from contextlib import suppress
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from freezegun.api import FrozenDateTimeFactory
@@ -46,6 +51,48 @@ def test_bad_payloads_are_ignored() -> None:
     send(mower, "events/json", "nope")
     assert mower.state is None
     assert mower.actions is None
+
+
+def test_bad_positions_are_ignored() -> None:
+    mower = _mower()
+    send(mower, "position/json", '{"x": NaN, "y": 1}')
+    send(mower, "position/json", {"x": True, "y": 1})
+    assert mower.position is None
+    send(mower, "position/json", {"x": 1, "y": None, "heading": "north", "attributes": ["job"]})
+    assert mower.position == {"x": 1.0, "y": 0.0, "heading": 0.0, "blades": False, "job_id": ""}
+    send(mower, "position/json", {"x": 2, "y": 3, "attributes": {"job_id": 7, "blades": True}})
+    assert mower.position["job_id"] == "" and mower.position["blades"] is True
+
+
+async def test_a_message_it_cant_handle_keeps_the_connection() -> None:
+    mower = Mower("host", 1883, None, None, "")
+    handled = []
+    handle = mower.handle
+
+    def fussy(topic: str, payload: bytes) -> None:
+        handled.append(topic)
+        if topic == "bad":
+            raise ValueError("bad")
+        handle(topic, payload)
+
+    mower.handle = fussy  # type: ignore[method-assign]
+
+    async def messages() -> AsyncIterator[SimpleNamespace]:
+        yield SimpleNamespace(topic="bad", payload=b"")
+        yield SimpleNamespace(topic="robot_state/json", payload=json.dumps(ROBOT_STATE).encode())
+        await asyncio.Event().wait()
+
+    connection = MagicMock()
+    connection.__aenter__.return_value = SimpleNamespace(subscribe=AsyncMock(), messages=messages())
+    with patch.object(mower_module, "_client", return_value=connection):
+        task = asyncio.create_task(mower.run())
+        for _ in range(20):
+            await asyncio.sleep(0)
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+    assert handled == ["bad", "robot_state/json"]
+    assert mower.state == ROBOT_STATE
 
 
 def test_actions() -> None:

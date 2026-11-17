@@ -35,7 +35,7 @@ from . import MowbiteConfigEntry, MowbiteData
 from .app import SKIP_REASONS, AppStatus, next_start, part_hours_left, skip_reason, stats_since
 from .entity import MowbiteEntity, async_add_when_there
 from .features import APP, EVENTS, MAP, RPC
-from .mower import KEY_STATE, Mower
+from .mower import KEY_STATE, Mower, finite_number
 from .planning import DRIVE, HISTORY, KEY_PLANNING, LEFTOVERS, PLAN, PLANNER_PLAN, mow_areas
 
 PARALLEL_UPDATES = 0
@@ -45,8 +45,8 @@ STATES = ["idle", "mowing", "docking", "undocking", "paused", "area_recording"]
 
 def _percent(key: str) -> Callable[[Mower], Any]:
     def value(mower: Mower) -> Any:
-        number = (mower.state or {}).get(key)
-        return round(number * 100) if isinstance(number, (int, float)) else None
+        number = finite_number((mower.state or {}).get(key))
+        return round(number * 100) if number is not None else None
 
     return value
 

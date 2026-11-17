@@ -103,13 +103,14 @@ def lawn_area(map_data: dict[str, Any] | None) -> float | None:
     obstacles = [
         _points(area.get("outline"))
         for area in (map_data or {}).get("areas") or []
-        if isinstance(area, dict) and (area.get("properties") or {}).get("type") == "obstacle"
+        if isinstance(area, dict) and (area.get("properties") or {}).get("type") == "obstacle" and is_active(area)
     ]
     total = 0.0
     for area in areas:
         total += polygon_area(area)
         for obstacle in obstacles:
-            if len(obstacle) >= 3 and _inside(obstacle[0], area):
+            # only an obstacle wholly in the area, one across its edge would need clipping
+            if len(obstacle) >= 3 and all(_inside(point, area) for point in obstacle):
                 total -= polygon_area(obstacle)
     return max(total, 0.0)
 
@@ -202,6 +203,9 @@ class Planning:
         self._connected = False
         self._map_version = -1
         self._after_docking: Callable[[], None] | None = None
+        # robot_state came and wasn't stale: ROS is up
+        self._available = False
+        self._hello_running = False
         self._texts = Texts(hass.config.language)
 
     @callback
@@ -358,10 +362,15 @@ class Planning:
         if mower.connected != self._connected:
             self._connected = mower.connected
             if mower.connected:
-                self._ask(self._async_hello())
+                self._hello()
             else:
                 self.methods = None
                 self._ready = False
+        if mower.available != self._available:
+            self._available = mower.available
+            # the broker may have been up before ROS, rpc.methods had no answer then
+            if mower.available and self.methods is None:
+                self._hello()
         if mower.map_version != self._map_version:
             self._map_version = mower.map_version
             if mow_areas(mower.map):
@@ -387,6 +396,9 @@ class Planning:
                     del self._job_starts[old]
         elif kind in ("JOB_COMPLETE", "JOB_RESET"):
             self._leftover_runs = {run for run in self._leftover_runs if run[0] != job_id}
+        elif kind == "BOOTED":
+            # ROS started anew while the broker stayed, what it offers and its planner's settings may have changed
+            self._hello()
         if kind == "AREA" and event.get("area_id") and self._ready and self.plan_method:
             self._ask(self._async_plan(event["area_id"]))
             if (
@@ -437,17 +449,28 @@ class Planning:
             _LOGGER.debug("%s didn't answer %s: %s", self._mower.host, method, err)
             return None
 
-    async def _async_hello(self) -> None:
-        methods = await self._rpc("rpc.methods")
-        if not isinstance(methods, list):
+    @callback
+    def _hello(self) -> None:
+        """Asks what the mower offers and how its planner is set, once at a time."""
+        if self._hello_running or not self._mower.connected:
             return
-        self.methods = {m for m in methods if isinstance(m, str)}
-        self._features.add(RPC + method for method in self.methods)
-        # which way plans are asked depends on the planner's settings, nothing is planned before they came
-        await self._async_settings()
-        self._ready = True
-        await self._async_history()
-        await self._async_after_job()
+        self._hello_running = True
+        self._ask(self._async_hello())
+
+    async def _async_hello(self) -> None:
+        try:
+            methods = await self._rpc("rpc.methods")
+            if not isinstance(methods, list):
+                return
+            self.methods = {m for m in methods if isinstance(m, str)}
+            self._features.add(RPC + method for method in self.methods)
+            # which way plans are asked depends on the planner's settings, nothing is planned before they came
+            await self._async_settings()
+            self._ready = True
+            await self._async_history()
+            await self._async_after_job()
+        finally:
+            self._hello_running = False
 
     async def _async_settings(self) -> None:
         if not self.has(SETTINGS):
