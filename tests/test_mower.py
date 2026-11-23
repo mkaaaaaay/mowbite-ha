@@ -172,6 +172,117 @@ async def test_going_quiet_reaches_the_entities(
     assert hass.states.get("lawn_mower.openmower").state == "unavailable"
 
 
+def test_map_keeps_only_numbers_to_draw() -> None:
+    """What isn't a number in an outline or a dock's place never reaches the card, it writes them into its svg."""
+    mower = _mower()
+    bad = '0)"><img src=x onerror=alert(1)>'
+    send(
+        mower,
+        "map/json",
+        {
+            "areas": [
+                {"id": "a", "properties": {"type": "mow"}, "outline": [{"x": 0, "y": 0}, {"x": bad, "y": 1}, {"x": 5, "y": 5}, [1, 2]]},
+                {"id": "b", "outline": "nope"},
+                "nope",
+            ],
+            "docking_stations": [
+                {"id": "d", "position": {"x": -0.77, "y": 1.28}, "heading": 2.88},
+                {"id": "e", "position": {"x": bad, "y": 1}, "heading": 0},
+                {"id": "f", "position": {"x": 1, "y": 1}, "heading": bad},
+                {"id": "g", "position": {"x": 1, "y": 2}},
+                {"id": "h", "position": [1, 2]},
+            ],
+        },
+    )
+    assert mower.map is not None
+    assert [area["outline"] for area in mower.map["areas"]] == [[{"x": 0.0, "y": 0.0}, {"x": 5.0, "y": 5.0}], []]
+    assert mower.map["areas"][0]["properties"] == {"type": "mow"}
+    assert [(dock["id"], dock["position"], dock["heading"]) for dock in mower.map["docking_stations"]] == [
+        ("d", {"x": -0.77, "y": 1.28}, 2.88),
+        ("g", {"x": 1.0, "y": 2.0}, 0.0),
+    ]
+    assert bad not in json.dumps(mower.map)
+    # no docks at all is a map too
+    send(mower, "map/json", {"areas": [], "docking_stations": "nope"})
+    assert mower.map == {"areas": [], "docking_stations": []}
+
+
+def test_a_listener_that_fails_doesnt_stop_the_others() -> None:
+    mower = _mower()
+    calls = []
+
+    def broken() -> None:
+        raise ValueError("broken")
+
+    mower.add_listener("state", broken)
+    mower.add_listener("state", lambda: calls.append("state"))
+    mower.add_change_listener(broken)
+    mower.add_change_listener(lambda: calls.append("change"))
+    mower.add_event_listener(lambda event: broken())
+    mower.add_event_listener(lambda event: calls.append(event["type"]))
+    send(mower, "robot_state/json", ROBOT_STATE)
+    send(mower, "robot_state/json", ROBOT_STATE)
+    send(mower, "events/json", {"id": "a", "type": "DOCKED"})
+    assert calls == ["state", "change", "state", "change", "DOCKED", "change"]
+
+
+async def test_connects_again_after_any_error() -> None:
+    """Something unexpected while connected is logged and the mower is connected to again, not left until a reload."""
+    mower = Mower("host", 1883, None, None, "")
+    connections = []
+
+    async def messages() -> AsyncIterator[SimpleNamespace]:
+        yield SimpleNamespace(topic="actions/json", payload=json.dumps(ACTIONS).encode())
+        yield SimpleNamespace(topic="robot_state/json", payload=json.dumps(ROBOT_STATE).encode())
+        if len(connections) == 1:
+            raise RuntimeError("unexpected")
+        await asyncio.Event().wait()
+
+    def client(*args: object) -> MagicMock:
+        connection = MagicMock()
+        connection.__aenter__.return_value = SimpleNamespace(subscribe=AsyncMock(), messages=messages())
+        connection.__aexit__.return_value = False
+        connections.append(connection)
+        return connection
+
+    gone = []
+    mower.add_listener("state", lambda: gone.append(mower.connected))
+    with patch.object(mower_module, "_client", client), patch.object(mower_module, "RECONNECT_MIN", 0):
+        task = asyncio.create_task(mower.run())
+        for _ in range(40):
+            await asyncio.sleep(0)
+        assert len(connections) == 2 and mower.connected
+        assert mower.actions is not None
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+    # the listeners heard it go and come back, and what it took before says nothing once it's gone
+    assert False in gone and gone[-1] is False
+    assert mower.actions is None
+
+
+def test_refusal() -> None:
+    mower = Mower("host", 1883, None, None, "")
+    start, home = "mower_logic:idle/start_mowing", "mower_logic:mowing/abort_mowing"
+    assert mower.refusal(start) == "not_connected"
+    mower._connected = True
+    # nothing known yet: nothing that sets it moving, the rest is the mower's to take or drop
+    assert mower.refusal(start) == "action_unavailable"
+    assert mower.refusal(home) is None
+    send(mower, "robot_state/json", ROBOT_STATE)
+    assert mower.refusal(start) == "action_unavailable"
+    send(mower, "actions/json", ACTIONS)
+    assert mower.refusal(start) is None
+    assert mower.refusal(home) == "action_unavailable"
+    # the mower goes on offering start while its emergency stop is on
+    send(mower, "robot_state/json", {**ROBOT_STATE, "emergency": 1})
+    assert mower.refusal(start) == "emergency_active"
+    assert mower.refusal("mower_logic/reset_emergency") is None
+    send(mower, "robot_state/json", ROBOT_STATE)
+    with patch.object(mower_module.time, "monotonic", return_value=mower_module.time.monotonic() + mower_module.STALE_AFTER + 1):
+        assert mower.refusal(start) == "action_unavailable"
+
+
 async def test_action_needs_a_connection() -> None:
     mower = _mower()
     with pytest.raises(mower_module.CannotConnect):

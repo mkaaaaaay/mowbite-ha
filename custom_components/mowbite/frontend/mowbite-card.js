@@ -408,12 +408,15 @@ async function gardenPut(key, value) {
   }
 }
 
+// what the browser kept of the mower's own pictures is cleaned again, a card from before may have kept it
+const keptArt = (art, op, value) => (value && art instanceof SandboxArt ? cleanArt(op, value) : value);
+
 // the garden's areas for these pictures and this input: from memory, from the browser, or worked out and kept
 function gardenAreas(art, input) {
   const key = `areas:${art.id}:${hashText(JSON.stringify(input))}`;
   if (!gardenMemo.has(key)) {
     const work = gardenGet(key).then(async (kept) => {
-      if (kept) return kept;
+      if (kept) return keptArt(art, 'areas', kept);
       const areas = await art.call('areas', input);
       void gardenPut(key, areas);
       return areas;
@@ -519,10 +522,17 @@ parent.postMessage({ready: true}, '*');
 // what can come back from the mower's pictures, with only the svg that draws: no scripts, no event handlers, no
 // links or anything loaded from elsewhere
 function cleanArt(op, result) {
-  if (!result || typeof result !== 'object') return result;
+  if (!result || typeof result !== 'object') return null;
   const out = JSON.parse(JSON.stringify(result));
-  if (op === 'mower' || op === 'dock') out.svg = cleanSvg(out.svg);
+  // next to the svg only numbers and yes or no: the card works out transforms with them
+  if (op === 'mower') return {fit: finite(out.fit) ? out.fit : null, side: out.side === true, upright: out.upright === true, svg: cleanSvg(out.svg)};
+  if (op === 'dock') {
+    const real = finite(out.real?.length, out.real?.pins) ? {length: out.real.length, pins: out.real.pins} : null;
+    return {real, svg: cleanSvg(out.svg)};
+  }
+  if (op === 'body') return bodyFrom(out);
   if (op === 'areas') {
+    out.grid = out.grid === true;
     out.defs = cleanSvg(out.defs);
     for (const key of ['things', 'over']) for (const [id, svg] of Object.entries(out[key] ?? {})) out[key][id] = cleanSvg(svg);
     for (const [id, fill] of Object.entries(out.fills ?? {})) if (!/^[\w-]+$/.test(fill)) delete out.fills[id];
@@ -547,10 +557,11 @@ function cleanCovers(covers) {
     });
 }
 
+// title and desc stay out: read as html their content would be html, not svg
 const SVG_ALLOWED = new Set(
   (
     'g path circle ellipse rect line polyline polygon defs linearGradient radialGradient stop pattern clipPath mask ' +
-    'symbol use text tspan title desc animate animateTransform filter feGaussianBlur feOffset ' +
+    'symbol use text tspan animate animateTransform filter feGaussianBlur feOffset ' +
     'feMerge feMergeNode feFlood feComposite feColorMatrix feBlend feMorphology feDropShadow feTurbulence ' +
     'feDisplacementMap marker'
   ).split(' '),
@@ -587,7 +598,7 @@ function cleanSvgText(text) {
   if (root.nodeName !== 'svg' || doc.getElementsByTagName('parsererror').length) return '';
   for (const el of [...root.querySelectorAll('*')]) {
     const animation = el.localName === 'animate' || el.localName === 'animateTransform';
-    if (!SVG_ALLOWED.has(el.localName) || el.namespaceURI !== svgNS || (animation && !SVG_ANIMATED.has(el.getAttribute('attributeName')))) {
+    if (!SVG_ALLOWED.has(el.localName) || el.namespaceURI !== svgNS || el.prefix || (animation && !SVG_ANIMATED.has(el.getAttribute('attributeName')))) {
       el.remove();
       continue;
     }
@@ -602,6 +613,14 @@ function cleanSvgText(text) {
       }
     }
   }
+  // comments, CDATA and processing instructions go: written out as they are, the page would read them as html
+  const strip = (node) => {
+    for (const child of [...node.childNodes]) {
+      if (child.nodeType === Node.ELEMENT_NODE) strip(child);
+      else if (child.nodeType !== Node.TEXT_NODE) child.remove();
+    }
+  };
+  strip(root);
   return [...root.childNodes].map((n) => new XMLSerializer().serializeToString(n)).join('').replace(/ xmlns="[^"]*"/g, '');
 }
 
@@ -1256,6 +1275,10 @@ const svgPath = (pts, digits = 3) => pts.map((p, i) => `${i ? 'L' : 'M'}${p.x.to
 
 const svgNS = 'http://www.w3.org/2000/svg';
 
+// what the mower, its planner and its pictures send is drawn only where it is numbers
+const finite = (...values) => values.every((v) => typeof v === 'number' && Number.isFinite(v));
+const listOf = (v) => (Array.isArray(v) ? v : []);
+
 // sets an element's svg only when it changed: what stays as it was isn't painted again
 function setSvg(el, svg) {
   if (el.svgText === svg) return;
@@ -1619,7 +1642,7 @@ class MowbiteMap {
       // the garden's life changes with the day and the weather: the last one kept right away on a new page, worked
       // out anew after it
       if (!this.gardenDrawn) {
-        const kept = await gardenGet(`life:${key}`);
+        const kept = keptArt(pictures, 'life', await gardenGet(`life:${key}`));
         if (kept && current()) show(art, kept);
       }
       const lifeArt = await pictures.call('life', {...life, uid: GARDEN_UID}).catch(() => null);
@@ -1744,16 +1767,28 @@ class MowbiteMap {
 
   // what the last job left uncut, as the planner found it
   setLeftovers(paths) {
-    this.leftoverLayer.innerHTML = (paths ?? [])
-      .map((points) => `<polyline class="leftover" points="${points.map(([x, y]) => `${x},${-y}`).join(' ')}"/>`)
-      .join('');
+    this.leftoverLayer.textContent = '';
+    for (const path of listOf(paths)) {
+      const points = listOf(path).filter((p) => finite(p?.[0], p?.[1]));
+      const el = document.createElementNS(svgNS, 'polyline');
+      el.setAttribute('class', 'leftover');
+      el.setAttribute('points', points.map(([x, y]) => `${x},${-y}`).join(' '));
+      this.leftoverLayer.appendChild(el);
+    }
   }
 
   // where the body came too close to an edge in the last job
   setTight(places) {
-    this.tightLayer.innerHTML = (places ?? [])
-      .map(([x, y]) => `<circle class="tightPlace" cx="${x}" cy="${-y}" r="0.06"/>`)
-      .join('');
+    this.tightLayer.textContent = '';
+    for (const place of listOf(places)) {
+      if (!finite(place?.[0], place?.[1])) continue;
+      const el = document.createElementNS(svgNS, 'circle');
+      el.setAttribute('class', 'tightPlace');
+      el.setAttribute('cx', place[0]);
+      el.setAttribute('cy', -place[1]);
+      el.setAttribute('r', '0.06');
+      this.tightLayer.appendChild(el);
+    }
   }
 
   // the mower's sizes, from the app or the integration, null without them
@@ -1974,22 +2009,29 @@ class MowbiteMap {
     const icon = this.dockIcon?.svg !== undefined ? this.dockIcon : FALLBACK_DOCK;
     const size = this.icons.dockSize ?? 1;
     const drawn = icon.svg ?? icon.draw();
-    this.docks.innerHTML = (this.map?.docking_stations ?? [])
-      .map((station) => {
-        const deg = (-station.heading * 180) / Math.PI;
-        if (icon.real) {
-          // a real station at its real size under the docked mower, its pins at the mower's front (as big as the
-          // other icons at least)
-          const {length, pins} = icon.real;
-          const ahead = (this.body?.front ?? 0.43) + pins - length / 2;
-          const x = station.position.x + Math.cos(station.heading) * ahead;
-          const y = station.position.y + Math.sin(station.heading) * ahead;
-          const half = Math.max(length / 2, (ICON_PX * size) / k);
-          return `<g class="dock" transform="translate(${x} ${-y}) rotate(${deg}) scale(${half})">${drawn}</g>`;
-        }
-        return `<g class="dock" transform="translate(${station.position.x} ${-station.position.y}) scale(${(ICON_PX * size) / k})">${drawn}</g>`;
-      })
-      .join('');
+    const real = finite(icon.real?.length, icon.real?.pins) ? icon.real : null;
+    this.docks.textContent = '';
+    for (const station of listOf(this.map?.docking_stations)) {
+      const at = station?.position;
+      const heading = station?.heading ?? 0;
+      if (!finite(at?.x, at?.y, heading)) continue;
+      let transform = `translate(${at.x} ${-at.y}) scale(${(ICON_PX * size) / k})`;
+      if (real) {
+        // a real station at its real size under the docked mower, its pins at the mower's front (as big as the
+        // other icons at least)
+        const {length, pins} = real;
+        const ahead = (this.body?.front ?? 0.43) + pins - length / 2;
+        const x = at.x + Math.cos(heading) * ahead;
+        const y = at.y + Math.sin(heading) * ahead;
+        const half = Math.max(length / 2, (ICON_PX * size) / k);
+        transform = `translate(${x} ${-y}) rotate(${(-heading * 180) / Math.PI}) scale(${half})`;
+      }
+      const el = document.createElementNS(svgNS, 'g');
+      el.setAttribute('class', 'dock');
+      el.setAttribute('transform', transform);
+      el.innerHTML = drawn;
+      this.docks.appendChild(el);
+    }
   }
 
   drawMower() {
@@ -2042,7 +2084,8 @@ class MowbiteMap {
 
     // a real mower from above lies exactly on its body, other icons the same size on screen as the dock or at their
     // real size (never smaller than a few pixels), in the middle of the body with the sizes set
-    const onBody = !!(icon.fit && shape);
+    const fit = finite(icon.fit) ? icon.fit : null;
+    const onBody = !!(fit && shape);
     // a figure's legs and a pushed mower walk with the speed, a tenth of a m/s is close enough
     const speed = Math.round((this.speed ?? 0) * 10) / 10;
     const blades = !!pose.blades;
@@ -2053,7 +2096,7 @@ class MowbiteMap {
       const drawn = drawing ?? FALLBACK_MOWER.draw();
       // a side view heading left would stand on its head, mirrored it keeps its feet on the ground, a figure only
       // looks left or right: turned by css, so it turns around instead of flipping over at once
-      const inner = onBody ? drawn : icon.fit ? `<g transform="scale(1 ${icon.fit})">${drawn}</g>` : drawn;
+      const inner = onBody ? drawn : fit ? `<g transform="scale(1 ${fit})">${drawn}</g>` : drawn;
       this.mower.innerHTML = `<g class="mower"><g class="turn">${inner}</g></g>`;
       this.mower.dataset.key = key;
     }
@@ -2094,7 +2137,7 @@ class MowbiteMap {
     this.art
       .call('mower', key, o)
       .then((drawn) => {
-        icon.meta = {fit: drawn.fit, side: drawn.side, upright: drawn.upright};
+        icon.meta = {fit: finite(drawn.fit) ? drawn.fit : null, side: !!drawn.side, upright: !!drawn.upright};
         icon.drawings.set(look, drawn.svg);
         this.mower.dataset.key = '';
         this.drawMower();

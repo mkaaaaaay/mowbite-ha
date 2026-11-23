@@ -60,6 +60,12 @@ READ_RPC = {
     "planner.log",
     PLAN,
 }
+# why an action isn't sent (Mower.refusal), for the card
+REFUSED = {
+    "not_connected": "Not connected to the mower",
+    "action_unavailable": "The mower doesn't take that right now",
+    "emergency_active": "The emergency stop is on, reset it first",
+}
 RPC_TIMEOUT = 30
 # a plan the planner has to work out anew takes longer, the app gives it as long
 PLAN_RPC_TIMEOUT = 90
@@ -242,22 +248,20 @@ async def ws_action(hass: HomeAssistant, connection: websocket_api.ActiveConnect
     if data is None:
         connection.send_error(msg["id"], websocket_api.ERR_NOT_FOUND, "Not a MowBite entity")
         return
-    if msg["action"] == "mow_leftovers":
-        # the planner gets the leftovers ready, a start in the next minutes mows only them
+    leftovers = msg["action"] == "mow_leftovers"
+    action_id = ACTION_START if leftovers else ACTIONS[msg["action"]]
+    # one the mower doesn't take would just be dropped, and nothing sets it moving with its emergency stop on
+    if refused := data.mower.refusal(action_id):
+        connection.send_error(msg["id"], refused, REFUSED[refused])
+        return
+    if leftovers:
+        # the planner gets the leftovers ready, a start in the next minutes mows only them. after the check above:
+        # left ready without a start, the next start would mow only them
         try:
-            armed = await data.mower.async_rpc("planner.leftovers", {"arm": True})
+            await data.planning.async_arm_leftovers()
         except (RpcError, TimeoutError, CannotConnect):
             connection.send_error(msg["id"], "planner_failed", "The planner didn't take it")
             return
-        if not isinstance(armed, dict) or not armed.get("armed"):
-            connection.send_error(msg["id"], "planner_failed", "The planner didn't take it")
-            return
-        msg = {**msg, "action": "start"}
-    action_id = ACTIONS[msg["action"]]
-    # actions/json says which actions the mower takes right now, one it doesn't take would just be dropped
-    if data.mower.action_enabled(action_id) is False:
-        connection.send_error(msg["id"], "action_unavailable", "The mower doesn't take that right now")
-        return
     try:
         await data.mower.async_action(action_id)
     except CannotConnect:

@@ -108,9 +108,9 @@ class MowbiteLawnMower(MowbiteEntity, LawnMowerEntity):
         await self._run(ACTION_HOME)
 
     async def _run(self, action_id: str) -> None:
-        # actions/json says which actions the mower takes right now, one it doesn't take would just be dropped
-        if self.mower.action_enabled(action_id) is False:
-            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="action_unavailable")
+        # one the mower doesn't take would just be dropped, and nothing sets it moving with its emergency stop on
+        if refused := self.mower.refusal(action_id):
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key=refused)
         try:
             await self.mower.async_action(action_id)
         except CannotConnect as err:

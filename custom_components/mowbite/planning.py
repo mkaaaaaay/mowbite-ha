@@ -22,7 +22,7 @@ from homeassistant.util import dt as dt_util
 
 from .events import SEVERITY_ERROR, SEVERITY_WARNING, Texts, interpret
 from .features import EVENTS, MAP, RPC, Features
-from .mower import CannotConnect, Mower, RpcError
+from .mower import CannotConnect, Mower, RpcError, finite_number, finite_numbers
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -123,7 +123,7 @@ def trim_plan(result: Any) -> dict[str, Any] | None:
     for path in result["paths"]:
         if not isinstance(path, dict):
             continue
-        points = [p[:2] for p in path.get("points") or [] if isinstance(p, list) and len(p) >= 2]
+        points = _numbers(path.get("points"), 2)
         index = [i for i in path.get("pose_index") or [] if isinstance(i, int)]
         if len(index) != len(points):
             index = []
@@ -157,12 +157,17 @@ def plan_progress(plan: dict[str, Any] | None, path: Any, pose: Any) -> float | 
     return min(done / total, 1.0)
 
 
+def _numbers(points: Any, count: int) -> list[list[float]]:
+    """Of a list of points those that are count finite numbers, the card writes them into its svg."""
+    found = (finite_numbers(point, count) for point in (points if isinstance(points, list) else []))
+    return [point for point in found if point is not None]
+
+
 def _leftover_paths(paths: Any) -> list[list[list[float]]]:
     """The leftovers' paths as point lists, whether the planner sends them as paths or as plain point lists."""
     out = []
-    for path in paths or []:
-        points = path.get("points") if isinstance(path, dict) else path
-        points = [p[:2] for p in points or [] if isinstance(p, list) and len(p) >= 2]
+    for path in paths if isinstance(paths, list) else []:
+        points = _numbers(path.get("points") if isinstance(path, dict) else path, 2)
         if len(points) >= 2:
             out.append(points)
     return out
@@ -606,7 +611,7 @@ class Planning:
                     "armed": result.get("armed") or 0,
                     "areas": {
                         area_id: {
-                            "left_m2": float(area.get("left_m2") or 0),
+                            "left_m2": finite_number(area.get("left_m2")) or 0.0,
                             "paths": _leftover_paths(area.get("paths")),
                             "message": area.get("message"),
                         }
@@ -622,8 +627,8 @@ class Planning:
                     "file": result.get("file"),
                     "areas": {
                         area_id: {
-                            "worst": float(area.get("worst") or 0),
-                            "places": [p[:3] for p in area.get("places") or [] if isinstance(p, list) and len(p) >= 3],
+                            "worst": finite_number(area.get("worst")) or 0.0,
+                            "places": _numbers(area.get("places"), 3),
                         }
                         for area_id, area in result["areas"].items()
                         if isinstance(area, dict)
@@ -635,8 +640,11 @@ class Planning:
             self._mower.notify(KEY_PLANNING)
 
     async def async_arm_leftovers(self) -> None:
-        """Gets the leftovers ready, a start in the next minutes then mows only them. Raises RpcError or CannotConnect."""
-        await self._mower.async_rpc(LEFTOVERS, {"arm": True})
+        """Gets the leftovers ready, a start in the next minutes then mows only them. Raises RpcError (also when the
+        planner has none to get ready: the start would mow everything), CannotConnect or TimeoutError."""
+        result = await self._mower.async_rpc(LEFTOVERS, {"arm": True})
+        if not isinstance(result, dict) or not result.get("armed"):
+            raise RpcError("no leftovers armed")
 
     async def async_reset_angle(self) -> None:
         await self._mower.async_rpc(ANGLE_RESET, {})

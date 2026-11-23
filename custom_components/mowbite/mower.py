@@ -42,6 +42,10 @@ ACTION_RESET_JOB = "mower_logic:idle/reset_job"
 # skips the rest of the path or outline loop it's on (needs an OpenMower that has it)
 ACTION_SKIP_PATH = "mower_logic:mowing/skip_path"
 
+# what sets the mower moving: held back while its emergency stop is on, or while its state or what it takes right
+# now isn't known
+MOVING = frozenset({ACTION_START, ACTION_CONTINUE})
+
 # keys listeners can ask for, sensors are "sensor:<id>"
 KEY_STATE = "state"
 KEY_ACTIONS = "actions"
@@ -158,6 +162,43 @@ def finite_number(value: Any) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         return None
     return float(value)
+
+
+def finite_numbers(values: Any, count: int) -> list[float] | None:
+    """The first count entries of a list as finite numbers, None when it's shorter or one of them isn't one."""
+    if not isinstance(values, list) or len(values) < count:
+        return None
+    numbers = [finite_number(value) for value in values[:count]]
+    return None if None in numbers else numbers
+
+
+def _point(point: Any) -> dict[str, float] | None:
+    if not isinstance(point, dict):
+        return None
+    x, y = finite_number(point.get("x")), finite_number(point.get("y"))
+    return None if x is None or y is None else {"x": x, "y": y}
+
+
+def clean_map(data: dict[str, Any]) -> dict[str, Any]:
+    """map/json with nothing but finite numbers where the card draws from it: the outlines' points and the docks'
+    places. A point or a dock that has something else is left out, the card writes them into its svg"""
+    areas = []
+    for area in data["areas"]:
+        if not isinstance(area, dict):
+            continue
+        outline = area.get("outline")
+        points = [_point(point) for point in (outline if isinstance(outline, list) else [])]
+        areas.append({**area, "outline": [point for point in points if point is not None]})
+    stations = []
+    found = data.get("docking_stations")
+    for station in found if isinstance(found, list) else []:
+        if not isinstance(station, dict):
+            continue
+        position = _point(station.get("position"))
+        heading = finite_number(station.get("heading", 0.0))
+        if position is not None and heading is not None:
+            stations.append({**station, "position": position, "heading": heading})
+    return {**data, "areas": areas, "docking_stations": stations}
 
 
 def _value(payload: bytes | bytearray | str) -> float | str:
@@ -294,6 +335,24 @@ class Mower:
             return None
         return self.actions.get(action_id, False)
 
+    def refusal(self, action_id: str) -> str | None:
+        """Why that action isn't sent right now, as the key of its message, None when it may go out.
+
+        The mower still offers start while its emergency stop is on, so that is checked here, for everything that
+        sends an action: the entities, the card and automations
+        """
+        if not self._connected:
+            return "not_connected"
+        enabled = self.action_enabled(action_id)
+        if enabled is False:
+            return "action_unavailable"
+        if action_id in MOVING:
+            if (self.state or {}).get("emergency"):
+                return "emergency_active"
+            if not self.available or enabled is None:
+                return "action_unavailable"
+        return None
+
     async def async_action(self, action_id: str) -> None:
         if self._client is None or not self._connected:
             raise CannotConnect
@@ -376,10 +435,15 @@ class Mower:
                     _LOGGER.info("Lost the connection to %s: %s", self.host, err)
                 else:
                     _LOGGER.debug("Can't connect to %s: %s", self.host, err)
+            except Exception:
+                # whatever went wrong, the mower is connected to again
+                _LOGGER.exception("The connection to %s ended unexpectedly", self.host)
             finally:
                 was = self._connected
                 self._client = None
                 self._connected = False
+                # what it took before the connection went says nothing about now
+                self.actions = None
                 for future in self._rpc.values():
                     if not future.done():
                         future.set_exception(CannotConnect())
@@ -457,7 +521,7 @@ class Mower:
         elif topic == TOPIC_MAP:
             data = _json(payload)
             if isinstance(data, dict) and isinstance(data.get("areas"), list):
-                self.map = data
+                self.map = clean_map(data)
                 self.map_version += 1
                 self._changed()
         elif topic == TOPIC_PARAMS:
@@ -510,7 +574,7 @@ class Mower:
             self.area_id = event.get("area_id") or None
             self.add_job_area(event.get("job_id"), self.area_id)
         for listener in list(self._event_listeners):
-            listener(event)
+            self._call(listener, event)
         self._changed()
 
     def add_job_area(self, job_id: Any, area_id: str | None) -> None:
@@ -524,18 +588,25 @@ class Mower:
         for old in list(self.job_areas)[:-5]:
             del self.job_areas[old]
 
+    def _call(self, listener: Callable[..., None], *args: Any) -> None:
+        """One listener, the others and the connection go on when it fails."""
+        try:
+            listener(*args)
+        except Exception:
+            _LOGGER.exception("A listener of %s failed", self.host)
+
     def _notify(self, key: str) -> None:
         for listener in list(self._listeners.get(key, ())):
-            listener()
+            self._call(listener)
         self._changed()
 
     def _notify_all(self) -> None:
         self._was_available = self.available
         for listeners in list(self._listeners.values()):
             for listener in list(listeners):
-                listener()
+                self._call(listener)
         self._changed()
 
     def _changed(self) -> None:
         for listener in list(self._change_listeners):
-            listener()
+            self._call(listener)

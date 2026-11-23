@@ -172,6 +172,8 @@ class MowbiteButton(MowbiteEntity, ButtonEntity):
         return super().available and self.mower.action_enabled(self.entity_description.action_id) is not False
 
     async def async_press(self) -> None:
+        if refused := self.mower.refusal(self.entity_description.action_id):
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key=refused)
         try:
             await self.mower.async_action(self.entity_description.action_id)
         except CannotConnect as err:
@@ -216,6 +218,9 @@ class MowbiteLeftoversButton(MowbiteEntity, ButtonEntity):
         )
 
     async def async_press(self) -> None:
+        # asked before the leftovers are got ready: left ready without a start, the next start would mow only them
+        if refused := self.mower.refusal(ACTION_START):
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key=refused)
         try:
             await self._planning.async_arm_leftovers()
             await self.mower.async_action(ACTION_START)

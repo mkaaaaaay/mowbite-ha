@@ -510,17 +510,59 @@ async def test_ignored_setting(hass: HomeAssistant, entry: MockConfigEntry, no_c
 
 
 async def test_mow_leftovers(hass: HomeAssistant, entry: MockConfigEntry, no_connection: None) -> None:
-    rpc = FakeRpc({**PLANNER_ANSWERS, "planner.leftovers": lambda params: {**PLANNER_ANSWERS["planner.leftovers"]}})
+    armed = [2]
+    rpc = FakeRpc(
+        {
+            **PLANNER_ANSWERS,
+            "planner.leftovers": lambda params: {
+                **PLANNER_ANSWERS["planner.leftovers"],
+                "armed": armed[0] if params.get("arm") else 0,
+            },
+        }
+    )
     mower = await setup_mower(hass, entry, rpc)
     send(mower, "map/json", MAP)
     await hass.async_block_till_done()
-    assert hass.states.get("button.openmower_mow_leftovers").state != "unavailable"
+    button = "button.openmower_mow_leftovers"
+    assert hass.states.get(button).state != "unavailable"
     with patch.object(mower, "async_action", AsyncMock()) as action:
-        await hass.services.async_call(
-            "button", "press", {ATTR_ENTITY_ID: "button.openmower_mow_leftovers"}, blocking=True
-        )
-    assert ("planner.leftovers", {"arm": True}) in rpc.calls
-    action.assert_awaited_once_with("mower_logic:idle/start_mowing")
+        await hass.services.async_call("button", "press", {ATTR_ENTITY_ID: button}, blocking=True)
+        assert ("planner.leftovers", {"arm": True}) in rpc.calls
+        action.assert_awaited_once_with("mower_logic:idle/start_mowing")
+
+        # the planner has none to get ready any more (mowed since, another map): a start would mow everything
+        action.reset_mock()
+        armed[0] = 0
+        with pytest.raises(HomeAssistantError) as err:
+            await hass.services.async_call("button", "press", {ATTR_ENTITY_ID: button}, blocking=True)
+        assert err.value.translation_key == "planner_failed"
+        action.assert_not_awaited()
+
+        # with the emergency stop on nothing is got ready and nothing starts
+        armed[0] = 2
+        rpc.calls.clear()
+        send(mower, "robot_state/json", {**ROBOT_STATE, "emergency": 1})
+        with pytest.raises(HomeAssistantError) as err:
+            await hass.services.async_call("button", "press", {ATTR_ENTITY_ID: button}, blocking=True)
+        assert err.value.translation_key == "emergency_active"
+        assert rpc.calls == []
+        action.assert_not_awaited()
+
+
+def test_what_the_card_draws_is_numbers() -> None:
+    """Points of plans, leftovers and tight places go into the card's svg: only finite numbers get there."""
+    bad = '0"/><img src=x onerror=alert(1)>'
+    assert planning_module._leftover_paths([{"points": [[1, 1], [bad, 2], [2, 2, 9]]}, [[3, 3], [4, "4"]], "nope", 5]) == [
+        [[1.0, 1.0], [2.0, 2.0]]
+    ]
+    assert planning_module._numbers([[1, 2, 0.03], [1, bad, 0.03], [1, 2], [1, 2, float("nan")], [True, 2, 3]], 3) == [
+        [1.0, 2.0, 0.03]
+    ]
+    trimmed = trim_plan({"paths": [{"points": [[0, 0], [bad, 1], [1, 1]], "pose_index": [0, 5, 9]}]})
+    assert trimmed is not None
+    # a point short, the pose index doesn't fit any more
+    assert trimmed["paths"][0]["points"] == [[0.0, 0.0], [1.0, 1.0]]
+    assert trimmed["paths"][0]["pose_index"] == []
 
 
 async def test_features_stay(hass: HomeAssistant, entry: MockConfigEntry, no_connection: None) -> None:

@@ -132,6 +132,24 @@ async def test_action_the_mower_doesnt_take(hass: HomeAssistant, mower: Mower) -
         action.assert_not_awaited()
 
 
+async def test_no_start_with_the_emergency_stop_on(hass: HomeAssistant, mower: Mower) -> None:
+    """The mower still offers start and continue then, an automation would send it off."""
+    with patch.object(mower, "async_action", AsyncMock()) as action:
+        send(mower, "robot_state/json", {**ROBOT_STATE, "emergency": 1})
+        with pytest.raises(HomeAssistantError) as err:
+            await _call(hass, "start_mowing")
+        assert err.value.translation_key == "emergency_active"
+        _enable(mower, "mower_logic:mowing/continue", "mower_logic:mowing/abort_mowing")
+        send(mower, "robot_state/json", {**ROBOT_STATE, "current_state": "PAUSED", "emergency": 1})
+        with pytest.raises(HomeAssistantError) as err:
+            await _call(hass, "start_mowing")
+        assert err.value.translation_key == "emergency_active"
+        action.assert_not_awaited()
+        # home is still taken
+        await _call(hass, "dock")
+        action.assert_awaited_once_with("mower_logic:mowing/abort_mowing")
+
+
 async def test_action_without_connection(hass: HomeAssistant, mower: Mower) -> None:
     mower._client = None
     with pytest.raises(HomeAssistantError) as err:

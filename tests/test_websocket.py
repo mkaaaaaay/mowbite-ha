@@ -107,6 +107,44 @@ async def test_actions(hass: HomeAssistant, hass_ws_client: WebSocketGenerator, 
         assert (await client.receive_json())["error"]["code"] == "invalid_format"
 
 
+async def test_nothing_moves_with_the_emergency_stop_on(
+    hass: HomeAssistant, hass_ws_client: WebSocketGenerator, mower: Mower
+) -> None:
+    """The mower still offers start then, the card's own check isn't the only one."""
+    send(mower, "robot_state/json", {**ROBOT_STATE, "emergency": 1})
+    client = await hass_ws_client(hass)
+    with patch.object(mower, "async_action", AsyncMock()) as action, patch.object(mower, "async_rpc", AsyncMock()) as rpc:
+        for name in ("start", "mow_leftovers"):
+            await client.send_json_auto_id({"type": "mowbite/action", "entity_id": MOWER, "action": name})
+            assert (await client.receive_json())["error"]["code"] == "emergency_active"
+        action.assert_not_awaited()
+        # and the leftovers weren't got ready for a start that didn't come
+        rpc.assert_not_awaited()
+
+
+async def test_leftovers_need_a_start_and_something_armed(
+    hass: HomeAssistant, hass_ws_client: WebSocketGenerator, mower: Mower
+) -> None:
+    client = await hass_ws_client(hass)
+    leftovers = {"type": "mowbite/action", "entity_id": MOWER, "action": "mow_leftovers"}
+    with patch.object(mower, "async_action", AsyncMock()) as action:
+        with patch.object(mower, "async_rpc", AsyncMock(return_value={"armed": 0})) as rpc:
+            await client.send_json_auto_id(leftovers)
+            assert (await client.receive_json())["error"]["code"] == "planner_failed"
+            rpc.assert_awaited_once_with("planner.leftovers", {"arm": True})
+            action.assert_not_awaited()
+        with patch.object(mower, "async_rpc", AsyncMock(return_value={"armed": 2})):
+            await client.send_json_auto_id(leftovers)
+            assert (await client.receive_json())["success"]
+            action.assert_awaited_once_with("mower_logic:idle/start_mowing")
+        # start not offered: asked before anything is got ready
+        send(mower, "actions/json", [])
+        with patch.object(mower, "async_rpc", AsyncMock()) as rpc:
+            await client.send_json_auto_id(leftovers)
+            assert (await client.receive_json())["error"]["code"] == "action_unavailable"
+            rpc.assert_not_awaited()
+
+
 async def test_action_without_connection(hass: HomeAssistant, hass_ws_client: WebSocketGenerator, mower: Mower) -> None:
     mower._client = None
     client = await hass_ws_client(hass)

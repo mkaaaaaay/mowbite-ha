@@ -429,6 +429,9 @@
     },
     "app_refused": {
       "message": "MowBite hat das nicht übernommen."
+    },
+    "emergency_active": {
+      "message": "Der Notaus ist aktiv, erst zurücksetzen."
     }
   },
   "options": {

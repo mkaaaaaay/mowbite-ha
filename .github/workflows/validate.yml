@@ -73,3 +73,5 @@ jobs:
           node-version: 22
       - name: The card and the build scripts parse
         run: for f in custom_components/mowbite/frontend/*.js scripts/*.js scripts/*.mjs; do node --check "$f"; done
+      - name: What the card writes into the page, tried in the runner's Chrome
+        run: node scripts/check-card.mjs

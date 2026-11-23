@@ -429,6 +429,9 @@
     },
     "app_refused": {
       "message": "MowBite didn't take it."
+    },
+    "emergency_active": {
+      "message": "The emergency stop is on, reset it first."
     }
   },
   "options": {
