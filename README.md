@@ -29,7 +29,7 @@ mower's MQTT broker directly, no cloud and no extra add-on.
 - **Only what your mower has**: the entities below come once the mower or the app first provides the data, and
   stay after that, also while the mower is off for the winter. None of them shows that your mower can't do. (The
   sensors above are always there, one your OpenMower doesn't report stays unavailable, the charge current with
-  `ignore_charging_current` for example.)
+  `ignore_charging_current` for example. One it stops reporting is unavailable after half a minute.)
   - Skip the rest of a path, drop an interrupted job (newer OpenMower)
   - The time left for the area and the whole job, how long mowing all areas takes, the area left uncut after a
     job with a button to mow just that, the place where the mower came closest to an edge, and the planning
@@ -37,7 +37,9 @@ mower's MQTT broker directly, no cloud and no extra add-on.
     idle (with the MowBite Planner on the mower)
   - The MowBite version, the mower computer's CPU temperature, free memory and storage, whether the schedule is
     on, its last start and the last start it left out (rain, dark, battery low, ...), and the longest blade time
-    on one charge in the last 30 days, which gets shorter as the battery ages (with the MowBite address set)
+    on one charge in the last 30 days, which gets shorter as the battery ages (with the MowBite address set).
+    What MowBite told of its schedule and its counts is shown for half an hour after its last answer, then these
+    are unavailable until it answers again
 - **More values, off at first** (with the MowBite address set, switch them on if you like): the Wi-Fi signal, the
   next scheduled start, a mowing calendar with the schedule's starts (for calendar triggers, the sprinkler off before
   the mower starts), the blade time, the distance driven with the blade on and in all and the runs, in total and

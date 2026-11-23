@@ -270,7 +270,7 @@ class MowbiteAppButton(MowbiteEntity, ButtonEntity):
 
     @property
     def available(self) -> bool:
-        return self._status.schedule is not None if self.entity_description.feature == APP + "schedule" else self._status.stats is not None
+        return self._status.has(self.entity_description.feature.removeprefix(APP))
 
     async def async_press(self) -> None:
         try:

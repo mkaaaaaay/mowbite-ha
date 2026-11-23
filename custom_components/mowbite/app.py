@@ -184,6 +184,10 @@ STATUS_REFRESH = timedelta(minutes=1)
 SCHEDULE_EVERY = 5
 BATTERY_EVERY = 15
 VERSION_EVERY = 60
+# what these endpoints said is shown this long after their last answer (s), then it's gone like the computer's
+# values: a schedule the app had hours ago isn't the one that starts the mower
+AGING = ("schedule", "schedule_log", "stats", "battery")
+AGING_AFTER = 30 * 60
 
 # what the schedule log says when it didn't start, the reason after "skip_". other: one this list doesn't know yet (a
 # newer app), rather than saying nothing
@@ -440,6 +444,8 @@ class AppStatus:
         self.schedule_log: dict[str, Any] | None = None
         self.battery: dict[str, Any] | None = None
         self.stats: dict[str, Any] | None = None
+        # when each of AGING answered last (monotonic)
+        self._answered_at: dict[str, float] = {}
         self._round = 0
         self._listeners: list[Callable[[], None]] = []
         # the schedule is read, changed and saved as a whole, one change at a time
@@ -448,6 +454,12 @@ class AppStatus:
     def add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
         self._listeners.append(listener)
         return lambda: self._listeners.remove(listener)
+
+    def has(self, endpoint: str) -> bool:
+        """Whether there's something to show of an endpoint, by the name its feature has: the version stays, the
+        others go with the computer or a while after their last answer"""
+        source = "system" if endpoint == "wifi" else "stats" if endpoint.startswith("maint_") else endpoint
+        return source == "version" or getattr(self, source) is not None
 
     async def async_start(self) -> Callable[[], None]:
         """Reads them soon and every minute, returns how to stop. Not waited for: five addresses that don't answer
@@ -573,7 +585,7 @@ class AppStatus:
                 self._take_version(info)
                 found.append("version")
         system = parse_system(text) if (text := await self._get(SYSTEM_PATH)) is not None else {}
-        # the computer's values are gone with it, the others keep what they said last
+        # the computer's values are gone with it, the others a while after their last answer (AGING)
         self.system = system if "uptime" in system else None
         if self.system is not None:
             found.append("system")
@@ -602,5 +614,15 @@ class AppStatus:
                 found.append("battery")
         if found:
             self._found(found)
+        self._age(found)
         for listener in list(self._listeners):
             listener()
+
+    def _age(self, found: list[str]) -> None:
+        """After a reading with what answered in it: what one of AGING said too long ago is gone."""
+        now = time.monotonic()
+        for name in AGING:
+            if name in found:
+                self._answered_at[name] = now
+            elif getattr(self, name) is not None and now - self._answered_at.setdefault(name, now) >= AGING_AFTER:
+                setattr(self, name, None)

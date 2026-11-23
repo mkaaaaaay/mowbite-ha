@@ -735,8 +735,7 @@ class MowbiteDataSensor(MowbiteEntity, SensorEntity):
     @property
     def available(self) -> bool:
         if not self.entity_description.needs_mower:
-            # the computer's values go with it, the others are what it said last
-            return self.entity_description.feature != APP + "system" or self._data.status.system is not None
+            return self._data.status.has(self.entity_description.feature.removeprefix(APP))
         return super().available
 
     @property

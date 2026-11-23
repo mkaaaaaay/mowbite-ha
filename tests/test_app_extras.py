@@ -137,6 +137,60 @@ async def test_entities_off_at_first(
     assert calendar.attributes["message"] == "Mowing"
 
 
+async def test_what_the_app_said_goes_a_while_after_its_last_answer(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, entry: MockConfigEntry, no_connection: None
+) -> None:
+    url = "http://openmower:8082"
+    aioclient_mock.get(url + "/cgi-bin/settings", json={})
+    answers = {
+        "/version.json": '{"version": "1.4.0"}',
+        "/cgi-bin/system": "remote 0\nuptime 3600\n",
+        "/cgi-bin/schedule": "enabled 1\nplan 1,2,3,4,5,6,7 10:00\n",
+        "/cgi-bin/schedule?log": "2000 started\n",
+        "/cgi-bin/stats": STATS,
+    }
+    app_status(aioclient_mock, url, answers)
+    entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(entry, options={CONF_APP_URL: url})
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    status = entry.runtime_data.status
+    shown = (
+        "binary_sensor.openmower_schedule",
+        "sensor.openmower_last_scheduled_start",
+        "sensor.openmower_last_skipped_start",
+    )
+    assert hass.states.get("binary_sensor.openmower_schedule").state == "on"
+    assert hass.states.get("sensor.openmower_mowbite_version").state == "1.4.0"
+
+    # the app is gone: what it said stays for a while, each reading that fails doesn't change that
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(url + "/cgi-bin/settings", status=404)
+    app_status(aioclient_mock, url)
+    now = app_module.time.monotonic()
+    with patch.object(app_module.time, "monotonic", return_value=now + app_module.AGING_AFTER - 1):
+        for _ in range(app_module.SCHEDULE_EVERY):
+            await status.async_refresh()
+        assert status.schedule is not None and status.stats is not None and status.schedule_log is not None
+        assert all(hass.states.get(entity_id).state != "unavailable" for entity_id in shown)
+    with patch.object(app_module.time, "monotonic", return_value=now + app_module.AGING_AFTER + 1):
+        await status.async_refresh()
+    assert status.schedule is None and status.stats is None and status.schedule_log is None
+    for entity_id in shown:
+        assert hass.states.get(entity_id).state == "unavailable", entity_id
+    # the version it had stays
+    assert hass.states.get("sensor.openmower_mowbite_version").state == "1.4.0"
+
+    # back again
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(url + "/cgi-bin/settings", json={})
+    app_status(aioclient_mock, url, answers)
+    for _ in range(app_module.SCHEDULE_EVERY):
+        await status.async_refresh()
+    assert hass.states.get("binary_sensor.openmower_schedule").state == "on"
+    assert hass.states.get("sensor.openmower_last_scheduled_start").state != "unavailable"
+
+
 async def test_no_accuracy_without_a_fix(hass: HomeAssistant, mower: Mower) -> None:
     assert hass.states.get("sensor.openmower_position_accuracy").state == "0.012"
     send(mower, "robot_state/json", {**ROBOT_STATE, "pose": {**ROBOT_STATE["pose"], "pos_accuracy": 999}})

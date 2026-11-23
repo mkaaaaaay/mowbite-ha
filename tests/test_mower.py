@@ -73,17 +73,17 @@ async def test_a_message_it_cant_handle_keeps_the_connection() -> None:
     handled = []
     handle = mower.handle
 
-    def fussy(topic: str, payload: bytes) -> None:
+    def fussy(topic: str, payload: bytes, kept: bool) -> None:
         handled.append(topic)
         if topic == "bad":
             raise ValueError("bad")
-        handle(topic, payload)
+        handle(topic, payload, kept)
 
     mower.handle = fussy  # type: ignore[method-assign]
 
     async def messages() -> AsyncIterator[SimpleNamespace]:
-        yield SimpleNamespace(topic="bad", payload=b"")
-        yield SimpleNamespace(topic="robot_state/json", payload=json.dumps(ROBOT_STATE).encode())
+        yield SimpleNamespace(topic="bad", payload=b"", retain=False)
+        yield SimpleNamespace(topic="robot_state/json", payload=json.dumps(ROBOT_STATE).encode(), retain=False)
         await asyncio.Event().wait()
 
     connection = MagicMock()
@@ -118,6 +118,56 @@ def test_sensors() -> None:
     send(mower, "sensors/om_mow_motor_temp/data", "25.0")
     assert mower.sensors == {"om_v_battery": 28.41, "om_charge_state": "CC", "om_mow_motor_temp": 25.0}
     assert calls == [1]
+
+
+def test_a_sensor_that_stops_coming_is_dropped() -> None:
+    mower = _mower()
+    calls = []
+    mower.add_listener("sensor:om_v_charge", lambda: calls.append(1))
+    with patch.object(mower_module.time, "monotonic", return_value=1000.0):
+        send(mower, "sensors/om_v_charge/data", "28.9")
+        send(mower, "sensors/om_v_battery/data", "27.2")
+    with patch.object(mower_module.time, "monotonic", return_value=1000.0 + mower_module.STALE_AFTER - 1):
+        mower.check()
+        assert mower.sensors == {"om_v_charge": 28.9, "om_v_battery": 27.2}
+        send(mower, "sensors/om_v_battery/data", "27.1")
+    with patch.object(mower_module.time, "monotonic", return_value=1000.0 + mower_module.STALE_AFTER):
+        mower.check()
+        mower.check()
+    # the one that went on coming stays, whoever listens to the other is told once
+    assert mower.sensors == {"om_v_battery": 27.1}
+    assert calls == [1, 1]
+    send(mower, "sensors/om_v_charge/data", "0.2")
+    assert mower.sensors["om_v_charge"] == 0.2
+
+
+def test_events_the_broker_kept() -> None:
+    """Handed out on subscribing they're news only from right before the connection, live ones whatever their time."""
+    mower = _mower()
+    mower._connected_time = 1_800_000_000.0
+    seen = []
+    mower.add_event_listener(lambda event: seen.append(event["id"]))
+    for event_id, t, kept in (
+        ("yesterday", 1_800_000_000 - 86400, True),
+        ("no time", None, True),
+        ("no number", "now", True),
+        ("just before", 1_800_000_000 - mower_module.KEPT_EVENT_WITHIN, True),
+        # a mower whose clock is behind
+        ("live", 1_800_000_000 - 86400, False),
+        ("live without", None, False),
+    ):
+        payload = json.dumps({"id": event_id, "type": "DOCKING_FAILED", "t": t})
+        mower.handle("events/json", payload.encode(), kept)
+    assert seen == ["just before", "live", "live without"]
+    # one of several kept in a list, and its reason isn't taken for the next emergency stop
+    kept_list = [
+        {"id": "old", "type": "DOCKED", "t": 5},
+        {"type": "EMERGENCY", "emergency": True, "reason": "LIFT", "t": 5},
+        {"id": "new", "type": "BOOTED", "t": 1_800_000_010},
+    ]
+    mower.handle("events/json", json.dumps(kept_list).encode(), True)
+    assert seen[3:] == ["new"]
+    assert mower._emergency_reason is None
 
 
 def test_events_once_each() -> None:
@@ -273,8 +323,8 @@ async def test_connects_again_after_any_error() -> None:
     connections = []
 
     async def messages() -> AsyncIterator[SimpleNamespace]:
-        yield SimpleNamespace(topic="actions/json", payload=json.dumps(ACTIONS).encode())
-        yield SimpleNamespace(topic="robot_state/json", payload=json.dumps(ROBOT_STATE).encode())
+        yield SimpleNamespace(topic="actions/json", payload=json.dumps(ACTIONS).encode(), retain=False)
+        yield SimpleNamespace(topic="robot_state/json", payload=json.dumps(ROBOT_STATE).encode(), retain=False)
         if len(connections) == 1:
             raise RuntimeError("unexpected")
         await asyncio.Event().wait()

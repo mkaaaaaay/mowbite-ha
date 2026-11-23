@@ -6,6 +6,7 @@ from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from freezegun.api import FrozenDateTimeFactory
 from homeassistant.components.lawn_mower import LawnMowerActivity
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import ATTR_ENTITY_ID, STATE_UNAVAILABLE
@@ -20,7 +21,7 @@ from pytest_homeassistant_custom_component.common import (
     mock_restore_cache_with_extra_data,
 )
 
-from custom_components.mowbite.mower import Mower
+from custom_components.mowbite.mower import STALE_AFTER, Mower
 
 from .conftest import ACTIONS, ROBOT_STATE, send
 
@@ -92,6 +93,26 @@ async def test_idle_in_the_dock_or_on_the_lawn(hass: HomeAssistant, mower: Mower
     send(mower, "sensors/om_v_charge/data", "0.1")
     await hass.async_block_till_done()
     assert hass.states.get(MOWER).state == idle
+
+
+async def test_a_charge_voltage_that_stopped_coming_is_no_dock(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, mower: Mower
+) -> None:
+    idle = getattr(LawnMowerActivity, "IDLE", LawnMowerActivity.DOCKED)
+    send(mower, "robot_state/json", {**ROBOT_STATE, "is_charging": 0})
+    send(mower, "sensors/om_v_charge/data", "28.9")
+    send(mower, "sensors/om_v_battery/data", "27.2")
+    await hass.async_block_till_done()
+    assert hass.states.get(MOWER).state == LawnMowerActivity.DOCKED
+    assert hass.states.get("sensor.openmower_battery_voltage").state == "27.2"
+    # robot_state goes on, the sensors don't: the last charge voltage isn't the dock any more
+    freezer.tick(STALE_AFTER - 10)
+    send(mower, "robot_state/json", {**ROBOT_STATE, "is_charging": 0})
+    freezer.tick(11)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert hass.states.get(MOWER).state == idle
+    assert hass.states.get("sensor.openmower_battery_voltage").state == STATE_UNAVAILABLE
 
 
 async def _call(hass: HomeAssistant, service: str) -> None:

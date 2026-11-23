@@ -53,7 +53,7 @@ KEY_ACTIONS = "actions"
 KEY_POSITION = "position"
 
 # robot_state comes about once a second while ros runs, this long without it the mower counts as gone
-# even if the broker is still there
+# even if the broker is still there. the sensors come as often, each one counts as long after it came last
 STALE_AFTER = 30
 RECONNECT_MIN = 5
 RECONNECT_MAX = 60
@@ -65,6 +65,9 @@ RPC_TIMEOUT = 20
 
 # mower_logic says why it stopped on events/json, a moment before or after robot_state shows the stop (s)
 EMERGENCY_REASON_WITHIN = 5
+
+# an event the broker kept is news only when it's from this long before connecting at most (s)
+KEPT_EVENT_WITHIN = 60
 
 
 class CannotConnect(Exception):
@@ -270,6 +273,8 @@ class Mower:
         self._prefix = normalize_prefix(prefix)
         self._client: aiomqtt.Client | None = None
         self._connected = False
+        # when the broker took the connection, unix seconds
+        self._connected_time = 0.0
         self._state_at = 0.0
         self._was_available = False
         self.closed = False
@@ -278,7 +283,9 @@ class Mower:
         self.state_time: float | None = None
         # action id -> enabled, None until actions/json came
         self.actions: dict[str, bool] | None = None
+        # the sensors that still come, and when each came last (monotonic)
         self.sensors: dict[str, float | str] = {}
+        self._sensor_at: dict[str, float] = {}
         # what xbot_monitoring says about each sensor: name, kind, limits
         self.sensor_infos: dict[str, dict[str, Any]] = {}
         # the newest STATE event (since when the state holds) and the area being mowed, from the events
@@ -433,9 +440,16 @@ class Mower:
             self._seeding = None
 
     def check(self) -> None:
-        """Tells everyone when the mower went quiet, robot_state stopping doesn't do that on its own."""
+        """Tells everyone when the mower went quiet, robot_state stopping doesn't do that on its own. A sensor that
+        stopped coming is dropped: its last value says nothing about now, a charge voltage from an hour ago would
+        keep the mower in its dock"""
         if self.available != self._was_available:
             self._notify_all()
+        now = time.monotonic()
+        for sensor_id in [s for s, at in self._sensor_at.items() if now - at >= STALE_AFTER]:
+            del self._sensor_at[sensor_id]
+            del self.sensors[sensor_id]
+            self._notify(f"sensor:{sensor_id}")
 
     async def run(self) -> None:
         """Stays connected until cancelled."""
@@ -457,12 +471,13 @@ class Mower:
                         await client.subscribe(self._prefix + topic)
                     self._client = client
                     self._connected = True
+                    self._connected_time = time.time()
                     self._notify_all()
                     delay = RECONNECT_MIN
                     _LOGGER.debug("Connected to %s", self.host)
                     async for message in client.messages:
                         try:
-                            self.handle(str(message.topic), message.payload)
+                            self.handle(str(message.topic), message.payload, bool(message.retain))
                         except Exception:
                             # one message it can't make sense of doesn't end the connection
                             _LOGGER.exception("Can't handle a message from %s on %s", self.host, message.topic)
@@ -488,8 +503,8 @@ class Mower:
             await asyncio.sleep(delay)
             delay = min(delay * 2, RECONNECT_MAX)
 
-    def handle(self, topic: str, payload: bytes | bytearray | str) -> None:
-        """One message from the broker."""
+    def handle(self, topic: str, payload: bytes | bytearray | str, kept: bool = False) -> None:
+        """One message from the broker, kept: one it kept from before and hands out on subscribing (retained)."""
         if not topic.startswith(self._prefix):
             return
         topic = topic[len(self._prefix) :]
@@ -532,7 +547,7 @@ class Mower:
         elif topic == TOPIC_EVENTS:
             data = _json(payload)
             for event in data if isinstance(data, list) else [data]:
-                if isinstance(event, dict):
+                if isinstance(event, dict) and not (kept and self._before_connecting(event)):
                     self._event(event)
         elif topic == TOPIC_POSITION:
             data = _json(payload)
@@ -598,7 +613,15 @@ class Mower:
             if (value := _value(payload)) is None:
                 return
             self.sensors[sensor_id] = value
+            self._sensor_at[sensor_id] = time.monotonic()
             self._notify(f"sensor:{sensor_id}")
+
+    def _before_connecting(self, event: dict[str, Any]) -> bool:
+        """Whether an event the broker kept is from clearly before this connection, or doesn't say from when: it was
+        told then, yesterday's failed docking is no news after a restart. Only asked for kept ones, what comes live
+        counts whatever its time says: a mower with a wrong clock would lose all its events"""
+        t = finite_number(event.get("t"))
+        return t is None or self._connected_time - t > KEPT_EVENT_WITHIN
 
     def _emergency(self, stopped: bool) -> None:
         """An emergency stop robot_state shows or doesn't show any more, with mower_logic's reason when it gave one."""
