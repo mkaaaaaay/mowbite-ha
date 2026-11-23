@@ -15,7 +15,7 @@ from . import MowbiteConfigEntry
 from .entity import MowbiteEntity, async_add_when_there
 from .features import DATUM
 from .geo import map_to_latlon
-from .mower import KEY_POSITION, KEY_STATE
+from .mower import KEY_POSITION, KEY_STATE, finite_number
 
 PARALLEL_UPDATES = 0
 
@@ -61,16 +61,17 @@ class MowbiteTracker(MowbiteEntity, TrackerEntity):
     def _where(self) -> tuple[float, float, float] | None:
         """Where it is on its map (position/json while it comes, else robot_state's pose) and how exactly. Without a
         gps fix where it last had one: the pose then is only a guess from the wheels, it shouldn't move it in a zone"""
-        pose = self.mower.position or (self.mower.state or {}).get("pose")
-        if not isinstance(pose, dict) or not isinstance(pose.get("x"), (int, float)):
+        pose = self.mower.live_position or self.mower.pose
+        x, y = finite_number(pose.get("x")), finite_number(pose.get("y"))
+        if x is None or y is None:
             return None
-        accuracy = ((self.mower.state or {}).get("pose") or {}).get("pos_accuracy")
-        if not isinstance(accuracy, (int, float)):
+        accuracy = finite_number(self.mower.pose.get("pos_accuracy"))
+        if accuracy is None:
             accuracy = 0
         # 999 and more is no fix at all
         elif accuracy >= 999:
             return self._here
-        return float(pose["x"]), float(pose.get("y") or 0), round(accuracy, 2)
+        return x, y, round(accuracy, 2)
 
     @property
     def latitude(self) -> float | None:

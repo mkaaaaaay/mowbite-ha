@@ -80,3 +80,20 @@ async def test_tracker(hass: HomeAssistant, mower: Mower, freezer) -> None:
     state = hass.states.get(TRACKER)
     assert state.attributes["latitude"] - 52.254119661740596 == pytest.approx(100 / 111260, rel=0.01)
     assert state.attributes["gps_accuracy"] == 0.5
+
+
+async def test_a_pose_that_is_none_moves_nothing(hass: HomeAssistant, mower: Mower) -> None:
+    """robot_state with a pose that's no object or has a text for a number: the tracker stays where it was."""
+    send(mower, "robot_state/json", ROBOT_STATE)
+    send(mower, "params/json", DATUM)
+    await hass.async_block_till_done()
+    before = hass.states.get(TRACKER)
+    assert before is not None and before.state != "unavailable"
+    for pose in ([1, 2], "nope", {"x": "1", "y": 2}, {"x": 1, "y": None, "pos_accuracy": "bad"}):
+        send(mower, "robot_state/json", {**ROBOT_STATE, "pose": pose})
+        await hass.async_block_till_done()
+    assert hass.states.get("binary_sensor.openmower_gps_fix") is not None
+    send(mower, "robot_state/json", ROBOT_STATE)
+    await hass.async_block_till_done()
+    after = hass.states.get(TRACKER)
+    assert after.attributes["latitude"] == before.attributes["latitude"]

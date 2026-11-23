@@ -25,11 +25,12 @@ from .mower import (
     ACTION_START,
     CannotConnect,
     RpcError,
+    finite_number,
 )
 from .planning import PLAN, PLANNER_PLAN
 
 if TYPE_CHECKING:
-    from . import MowbiteData
+    from . import MowbiteConfigEntry, MowbiteData
 
 # the card's buttons by name, each the mower_logic action the MowBite app sends for it
 ACTIONS = {
@@ -43,22 +44,23 @@ ACTIONS = {
     "skip_path": ACTION_SKIP_PATH,
 }
 
-# what the card may ask the mower for its dashboard, as the app's own pages ask it: only what reads. planner.leftovers
-# without "arm" (that's mowing the leftovers, the mow_leftovers action), mowing.plan only without the MowBite Planner
-# planning itself (with it, it counts as mower_logic fetching its plan, see planning.plan_method)
-READ_RPC = {
-    "rpc.methods",
-    "events.history",
-    "events.history.list",
-    "logs.recent",
-    "position.history",
-    "position.history.list",
-    "planner.plan",
-    "planner.settings",
-    "planner.leftovers",
-    "planner.drive",
-    "planner.log",
-    PLAN,
+# what the card may ask the mower for its dashboard, as the app's own pages ask it: only what reads, each with the
+# parameters those pages send and no others. planner.leftovers without "arm" (that's mowing the leftovers, the
+# mow_leftovers action), mowing.plan only without the MowBite Planner planning itself (with it, it counts as
+# mower_logic fetching its plan, see planning.plan_method)
+READ_RPC: dict[str, tuple[str, ...]] = {
+    "rpc.methods": (),
+    "events.history": ("date",),
+    "events.history.list": (),
+    "logs.recent": ("since", "limit"),
+    "position.history": ("job_id",),
+    "position.history.list": (),
+    "planner.plan": ("area_id",),
+    "planner.settings": (),
+    "planner.leftovers": ("job_id", "area_id"),
+    "planner.drive": (),
+    "planner.log": ("since", "limit"),
+    PLAN: ("area_id",),
 }
 # why an action isn't sent (Mower.refusal), for the card
 REFUSED = {
@@ -86,22 +88,38 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_art)
 
 
-def _data(hass: HomeAssistant, entity_id: str) -> MowbiteData | None:
-    """The mower behind one of its entities, None when it isn't a loaded MowBite entity."""
+def _entry(hass: HomeAssistant, entity_id: str) -> MowbiteConfigEntry | None:
+    """The mower's entry behind one of its entities, None when it isn't a loaded MowBite entity."""
     entity = er.async_get(hass).async_get(entity_id)
     if entity is None or entity.platform != DOMAIN or entity.config_entry_id is None:
         return None
     entry = hass.config_entries.async_get_entry(entity.config_entry_id)
     if entry is None or entry.state is not ConfigEntryState.LOADED:
         return None
-    return entry.runtime_data
+    return entry
+
+
+def _data(hass: HomeAssistant, entity_id: str) -> MowbiteData | None:
+    entry = _entry(hass, entity_id)
+    return entry.runtime_data if entry is not None else None
+
+
+def reset_allowed(hass: HomeAssistant, entry: MowbiteConfigEntry) -> bool:
+    """Whether the emergency stop may be reset from here: only with the button for it switched on. It's off until
+    someone turns it on, the card and its command go by the same choice"""
+    registry = er.async_get(hass)
+    entity_id = registry.async_get_entity_id("button", DOMAIN, f"{entry.entry_id}_reset_emergency")
+    entity = registry.async_get(entity_id) if entity_id else None
+    return entity is not None and not entity.disabled
 
 
 class Feed:
     """What one card got so far: the map and the app's settings only when they change, of the track only what's new."""
 
-    def __init__(self, data: MowbiteData) -> None:
-        self._data = data
+    def __init__(self, hass: HomeAssistant, entry: MowbiteConfigEntry) -> None:
+        self._hass = hass
+        self._entry = entry
+        self._data: MowbiteData = entry.runtime_data
         self._map = -1
         self._settings = -1
         self._track = -1
@@ -111,6 +129,7 @@ class Feed:
     def next(self) -> dict[str, Any]:
         data = self._data
         out = snapshot(data)
+        out["reset_emergency"] = reset_allowed(self._hass, self._entry)
         mower = data.mower
         if mower.map_version != self._map:
             self._map = mower.map_version
@@ -164,7 +183,7 @@ def snapshot(data: MowbiteData) -> dict[str, Any]:
     current = (mower.state or {}).get("current_state")
     last = mower.last_state_event or {}
     return {
-        "position": mower.position,
+        "position": mower.live_position,
         "closed": mower.closed,
         "connected": mower.connected,
         "available": mower.available,
@@ -194,13 +213,14 @@ def snapshot(data: MowbiteData) -> dict[str, Any]:
 @callback
 def ws_subscribe(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
     """Sends the mower's state now and whenever it changes, until the card unsubscribes."""
-    data = _data(hass, msg["entity_id"])
-    if data is None:
+    entry = _entry(hass, msg["entity_id"])
+    if entry is None:
         connection.send_error(msg["id"], websocket_api.ERR_NOT_FOUND, "Not a MowBite entity")
         return
+    data: MowbiteData = entry.runtime_data
     pending: CALLBACK_TYPE | None = None
     sent_at = 0.0
-    feed = Feed(data)
+    feed = Feed(hass, entry)
 
     @callback
     def send(_now: Any = None) -> None:
@@ -244,12 +264,16 @@ def ws_subscribe(hass: HomeAssistant, connection: websocket_api.ActiveConnection
 @websocket_api.async_response
 async def ws_action(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
     """One of the card's buttons."""
-    data = _data(hass, msg["entity_id"])
-    if data is None:
+    entry = _entry(hass, msg["entity_id"])
+    if entry is None:
         connection.send_error(msg["id"], websocket_api.ERR_NOT_FOUND, "Not a MowBite entity")
         return
+    data: MowbiteData = entry.runtime_data
     leftovers = msg["action"] == "mow_leftovers"
     action_id = ACTION_START if leftovers else ACTIONS[msg["action"]]
+    if action_id == ACTION_RESET_EMERGENCY and not reset_allowed(hass, entry):
+        connection.send_error(msg["id"], "reset_disabled", "Resetting the emergency stop from here is switched off")
+        return
     # one the mower doesn't take would just be dropped, and nothing sets it moving with its emergency stop on
     if refused := data.mower.refusal(action_id):
         connection.send_error(msg["id"], refused, REFUSED[refused])
@@ -286,11 +310,16 @@ async def ws_rpc(hass: HomeAssistant, connection: websocket_api.ActiveConnection
         connection.send_error(msg["id"], websocket_api.ERR_NOT_FOUND, "Not a MowBite entity")
         return
     method = msg["method"]
-    params = msg.get("params", {})
-    allowed = method in READ_RPC
-    if method == "planner.leftovers" and isinstance(params, dict) and params.get("arm"):
-        allowed = False
-    if method == PLAN and data.planning.plan_method != PLAN:
+    # an empty list is how the app's pages ask without parameters
+    params = msg.get("params") or {}
+    allowed = method in READ_RPC and isinstance(params, dict)
+    if allowed:
+        allowed = all(
+            key in READ_RPC[method] and (isinstance(value, str) or finite_number(value) is not None)
+            for key, value in params.items()
+        )
+    # the settings as they are right now: switched to planning itself in the app, the planner must not get mowing.plan
+    if allowed and method == PLAN and await data.planning.async_plan_method() != PLAN:
         allowed = False
     if not allowed:
         connection.send_error(msg["id"], "not_allowed", f"{method} isn't read only")

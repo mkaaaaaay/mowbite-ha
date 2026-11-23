@@ -23,7 +23,7 @@ from homeassistant.helpers.typing import ConfigType
 from homeassistant.util import dt as dt_util
 
 from . import websocket
-from .app import AppSettings, AppStatus
+from .app import AppSettings, AppStatus, shown_url
 from .const import CONF_APP_URL, CONF_MAP, CONF_PREFIX, CONF_SIZES, DOMAIN
 from .features import ACTION, APP, DATUM, Features
 from .mower import KEY_ACTIONS, Mower
@@ -163,6 +163,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: MowbiteConfigEntry) -> b
         entry.options.get(CONF_SIZES),
     )
     entry.async_on_unload(snooze.unload)
+    # what's still waiting to be saved is saved now: written after the mower was removed, the files would be back
+    entry.async_on_unload(snooze.async_flush)
+    entry.async_on_unload(features.async_flush)
     entry.async_on_unload(planning.start())
 
     @callback
@@ -195,7 +198,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: MowbiteConfigEntry) -> b
                 is_fixable=False,
                 severity=ir.IssueSeverity.WARNING,
                 translation_key="app_unreachable",
-                translation_placeholders={"name": entry.title, "url": app.url or ""},
+                translation_placeholders={"name": entry.title, "url": shown_url(app.url)},
             )
 
     entry.async_on_unload(app.add_reach_listener(app_reach))
@@ -230,6 +233,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: MowbiteConfigEntry) -> b
 async def async_remove_entry(hass: HomeAssistant, entry: MowbiteConfigEntry) -> None:
     """The last mower gone, the card goes from the dashboard resources too."""
     await Features(hass, entry.entry_id).async_remove()
+    await Snooze(hass, entry.entry_id).async_remove()
     if not any(other.entry_id != entry.entry_id for other in hass.config_entries.async_entries(DOMAIN)):
         await _async_card_resource(hass, None)
 

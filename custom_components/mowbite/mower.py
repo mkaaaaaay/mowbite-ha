@@ -80,11 +80,13 @@ class NoMower(Exception):
 
 
 class RpcError(Exception):
-    """The mower answered an rpc with an error, or doesn't know the method. code: the json-rpc error code."""
+    """The mower answered an rpc with an error, or doesn't know the method. code: the json-rpc error code, data: what
+    the error says beyond its text (the planner's own code for why, say)."""
 
-    def __init__(self, message: str, code: int | None = None) -> None:
+    def __init__(self, message: str, code: int | None = None, data: Any = None) -> None:
         super().__init__(message)
         self.code = code
+        self.data = data
 
 
 class Track:
@@ -136,12 +138,20 @@ def _history(result: Any) -> list[tuple[float, float, bool]]:
     if not isinstance(result, dict):
         return points
     blades = False
-    for segment in result.get("segments") or []:
+
+    def take(found: Any) -> None:
+        for point in found if isinstance(found, list) else []:
+            if (xy := finite_numbers(point, 2)) is not None:
+                points.append((xy[0], xy[1], blades))
+
+    segments = result.get("segments")
+    for segment in segments if isinstance(segments, list) else []:
         if not isinstance(segment, dict):
             continue
-        blades = bool((segment.get("attributes") or {}).get("blades"))
-        points.extend((p[0], p[1], blades) for p in segment.get("points") or [] if isinstance(p, list) and len(p) >= 2)
-    points.extend((p[0], p[1], blades) for p in result.get("buffer") or [] if isinstance(p, list) and len(p) >= 2)
+        attributes = segment.get("attributes")
+        blades = bool(attributes.get("blades")) if isinstance(attributes, dict) else False
+        take(segment.get("points"))
+    take(result.get("buffer"))
     return points
 
 
@@ -204,12 +214,14 @@ def clean_map(data: dict[str, Any]) -> dict[str, Any]:
     return {**data, "areas": areas, "docking_stations": stations}
 
 
-def _value(payload: bytes | bytearray | str) -> float | str:
+def _value(payload: bytes | bytearray | str) -> float | str | None:
+    """A sensor's value: a number, or its text. None for a number that isn't one (nan, inf)."""
     text = payload.decode(errors="replace") if isinstance(payload, (bytes, bytearray)) else str(payload)
     try:
-        return float(text)
+        value = float(text)
     except ValueError:
         return text.strip()
+    return value if math.isfinite(value) else None
 
 
 def _client(host: str, port: int, username: str | None, password: str | None, timeout: float) -> aiomqtt.Client:
@@ -273,10 +285,13 @@ class Mower:
         self.last_state_event: dict[str, Any] | None = None
         self.area: str | None = None
         self.area_id: str | None = None
+        # the job that area's AREA event was of
+        self._area_job: str | None = None
         # the areas each job got to, from the AREA events (the job's own id from position/json)
         self.job_areas: dict[str, list[str]] = {}
         # where the mower is, from position/json: x, y, heading and its job and blades
         self.position: dict[str, Any] | None = None
+        self._position_at = 0.0
         self.map: dict[str, Any] | None = None
         self.map_version = 0
         # of the parameters only what the card needs: the gps datum (for the sun times) and how accurate a position
@@ -310,6 +325,19 @@ class Mower:
             and self.state is not None
             and time.monotonic() - self._state_at < STALE_AFTER
         )
+
+    @property
+    def pose(self) -> dict[str, Any]:
+        """robot_state's pose, empty without one."""
+        pose = (self.state or {}).get("pose")
+        return pose if isinstance(pose, dict) else {}
+
+    @property
+    def live_position(self) -> dict[str, Any] | None:
+        """Where position/json last put the mower, None once it stopped coming: robot_state's pose is newer then."""
+        if self.position is None or time.monotonic() - self._position_at >= STALE_AFTER:
+            return None
+        return self.position
 
     def add_listener(self, key: str, listener: Callable[[], None]) -> Callable[[], None]:
         """Called when that key changes or the mower comes or goes, returns how to stop it."""
@@ -508,14 +536,20 @@ class Mower:
                     self._event(event)
         elif topic == TOPIC_POSITION:
             data = _json(payload)
-            if not isinstance(data, dict) or (x := finite_number(data.get("x"))) is None:
+            if not isinstance(data, dict):
                 return
-            y = finite_number(data.get("y")) or 0.0
+            x, y = finite_number(data.get("x")), finite_number(data.get("y"))
+            if x is None or y is None:
+                return
             attributes = data.get("attributes")
             if not isinstance(attributes, dict):
                 attributes = {}
             job_id = attributes.get("job_id")
             job_id = job_id if isinstance(job_id, str) else ""
+            if job_id and self._area_job and job_id != self._area_job:
+                # another job: the area the last one was on isn't this one's
+                self.area = self.area_id = self._area_job = None
+            self._position_at = time.monotonic()
             self.position = {
                 "x": x,
                 "y": y,
@@ -537,7 +571,7 @@ class Mower:
             data = _json(payload)
             if not isinstance(data, dict):
                 return
-            numbers = {k: v for k, v in data.items() if isinstance(v, (int, float)) and not isinstance(v, bool)}
+            numbers = {k: n for k, v in data.items() if (n := finite_number(v)) is not None}
             # v2 keeps the datum under /ll/services/gps/, v1 under the gps driver (the app matches the key's end)
             lat = next((v for k, v in numbers.items() if k.endswith("/datum_lat")), None)
             lon = next((v for k, v in numbers.items() if k.endswith(("/datum_long", "/datum_lon"))), None)
@@ -555,12 +589,15 @@ class Mower:
                 error = data["error"]
                 code = error.get("code") if isinstance(error, dict) else None
                 message = error.get("message") if isinstance(error, dict) else None
-                future.set_exception(RpcError(str(message or error), code if isinstance(code, int) else None))
+                details = error.get("data") if isinstance(error, dict) else None
+                future.set_exception(RpcError(str(message or error), code if isinstance(code, int) else None, details))
             else:
                 future.set_result(data.get("result"))
         elif topic.startswith("sensors/") and topic.endswith("/data"):
             sensor_id = topic[len("sensors/") : -len("/data")]
-            self.sensors[sensor_id] = _value(payload)
+            if (value := _value(payload)) is None:
+                return
+            self.sensors[sensor_id] = value
             self._notify(f"sensor:{sensor_id}")
 
     def _emergency(self, stopped: bool) -> None:
@@ -600,10 +637,12 @@ class Mower:
         if event["type"] == "STATE":
             self.last_state_event = event
             if event.get("state") != "MOWING":
-                self.area = None
+                # the next AREA event says where it mows then, until it comes robot_state's area counts
+                self.area = self.area_id = None
         elif event["type"] == "AREA":
             self.area = event.get("area_name") or None
             self.area_id = event.get("area_id") or None
+            self._area_job = event["job_id"] if isinstance(event.get("job_id"), str) else None
             self.add_job_area(event.get("job_id"), self.area_id)
         for listener in list(self._event_listeners):
             self._call(listener, event)

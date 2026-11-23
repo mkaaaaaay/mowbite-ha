@@ -8,6 +8,8 @@
 //   outside of it, the same file the app's container serves (/mowbite-art.js)
 // - mowbite-app.js: what the dashboard works out (the runs of a day, why an emergency stop is on, leftovers, the
 //   schedule, the texts in the app's languages). It asks the mower and the app through the card (setTransport)
+// - mower_models.json: the app's table of mower models (their names and sizes) for the integration's options, the app
+//   is the only place it's kept
 //
 // Run it again after the app changed. MowBite is GPL-3.0 like this integration.
 
@@ -210,6 +212,22 @@ ${fs.readFileSync(path.join(here, bundle.exports), 'utf8')}${css}`,
   );
   console.log(`${path.relative(process.cwd(), out)}: ${(fs.statSync(out).size / 1024).toFixed(0)} KB from MowBite ${commit}`);
 }
+
+// the app's table of mower models, read from its mowerBody.ts: the module run by itself, what it imports isn't needed
+// for the table and stands for anything
+function mowerModels() {
+  const source = fs.readFileSync(path.join(app, 'src/lib/mowerBody.ts'), 'utf8');
+  const js = ts.transpileModule(source, {compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020}}).outputText;
+  const anything = new Proxy(function () {}, {get: () => anything, apply: () => anything});
+  const module = {exports: {}};
+  new Function('module', 'exports', 'require', js)(module, module.exports, () => anything);
+  const models = module.exports.MOWER_MODELS;
+  if (!Array.isArray(models) || !models.length) throw new Error('src/lib/mowerBody.ts has no MOWER_MODELS');
+  return models.map(({key, label, sizes}) => ({key, label, sizes}));
+}
+const models = path.join(frontend, '..', 'mower_models.json');
+fs.writeFileSync(models, JSON.stringify({source: `MowBite ${commit}`, models: mowerModels()}, null, 2) + '\n');
+console.log(`${path.relative(process.cwd(), models)} from MowBite ${commit}`);
 
 // each module sees a page of its own: what the app's code keeps in the browser or sets on the page stays in here
 function wrap(code) {

@@ -38,9 +38,9 @@ ACTIVITIES = {
 # Home Assistant 2026.10 has a mower that stands still outside the dock, before that it can only be docked
 IDLE = getattr(LawnMowerActivity, "IDLE", LawnMowerActivity.DOCKED)
 
-# volts on the charging contacts above which the mower sits in the dock, also when it's fully charged and doesn't
-# charge any more (MowBite tells the dock the same way)
-DOCK_VOLTS = 20
+# volts on the charging contacts above which the mower counts as in the dock, also when it's fully charged and doesn't
+# charge any more: the mower's own rule (mower_logic's idle behaviour) and MowBite's. Only for what's shown
+DOCK_VOLTS = 5
 
 
 async def async_setup_entry(

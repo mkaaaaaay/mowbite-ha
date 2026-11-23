@@ -324,6 +324,9 @@
           "gone": "Start time changed or removed",
           "no_area": "No area left to mow",
           "hold": "Update in progress",
+          "clock": "Clock not reliable",
+          "not_docked": "Not in the dock",
+          "missed": "Start time missed",
           "other": "Other reason"
         },
         "state_attributes": {
@@ -483,7 +486,6 @@
     "mower": {
       "options": {
         "none": "None",
-        "yf_nx": "YardForce NX60 / NX80 / NX100",
         "custom": "Own sizes"
       }
     }

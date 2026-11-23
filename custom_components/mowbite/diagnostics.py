@@ -12,7 +12,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.loader import async_get_integration
 
 from . import MowbiteConfigEntry
-from .const import DOMAIN
+from .app import shown_url
+from .const import CONF_APP_URL, DOMAIN
 
 TO_REDACT = {CONF_PASSWORD, CONF_USERNAME}
 
@@ -24,7 +25,11 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: Mowbite
     areas = (mower.map or {}).get("areas") or []
     return {
         "integration": str(integration.version),
-        "entry": {"data": async_redact_data(dict(entry.data), TO_REDACT), "options": dict(entry.options)},
+        "entry": {
+            "data": async_redact_data(dict(entry.data), TO_REDACT),
+            # the app's address without a login someone put into it
+            "options": {**entry.options, CONF_APP_URL: shown_url(entry.options.get(CONF_APP_URL))},
+        },
         "mower": {
             "connected": mower.connected,
             "available": mower.available,
@@ -61,6 +66,7 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: Mowbite
             "methods": sorted(data.planning.methods) if data.planning.methods is not None else None,
             "settings": sorted(data.planning.settings) if data.planning.settings else None,
             "problem": data.planning.problem,
+            "not_planned": data.planning.refused,
         },
         "map_mode": data.map_mode,
         "mower_sizes": data.mower_sizes,

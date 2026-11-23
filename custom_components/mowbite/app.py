@@ -15,6 +15,7 @@ import aiohttp
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_interval
+from yarl import URL
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,12 +48,41 @@ KEYS = (
 WITHOUT_APP: dict[str, Any] = {"dashboard": {"map": "always"}}
 
 
+# an answer of the app is read up to this size (bytes), a bigger one counts as none: the biggest it has is its
+# pictures, a few hundred KB
+ANSWER_MAX = 4_000_000
+
+
 class CannotReachApp(Exception):
     """No MowBite answers at that address."""
 
 
 class AppRefused(Exception):
     """MowBite didn't take a change."""
+
+
+class TooBig(Exception):
+    """An answer bigger than ANSWER_MAX."""
+
+
+async def read_text(response: aiohttp.ClientResponse) -> str:
+    """The answer's text read piece by piece, raises TooBig over ANSWER_MAX and UnicodeDecodeError."""
+    pieces = []
+    size = 0
+    async for piece in response.content.iter_chunked(65536):
+        size += len(piece)
+        if size > ANSWER_MAX:
+            raise TooBig
+        pieces.append(piece)
+    return b"".join(pieces).decode()
+
+
+def shown_url(url: str | None) -> str:
+    """The app's address for a log, a repair or diagnostics: without a login someone put into it."""
+    try:
+        return str(URL(url or "").with_user(None))
+    except (TypeError, ValueError):
+        return ""
 
 
 async def async_fetch(hass: HomeAssistant, url: str) -> dict[str, Any]:
@@ -62,8 +92,8 @@ async def async_fetch(hass: HomeAssistant, url: str) -> dict[str, Any]:
             url.rstrip("/") + SETTINGS_PATH, timeout=aiohttp.ClientTimeout(total=10)
         ) as response:
             response.raise_for_status()
-            data = await response.json(content_type=None)
-    except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            data = json.loads(await read_text(response))
+    except (aiohttp.ClientError, TimeoutError, ValueError, TooBig) as err:
         raise CannotReachApp from err
     if not isinstance(data, dict):
         raise CannotReachApp
@@ -113,7 +143,7 @@ class AppSettings:
         try:
             data = await async_fetch(self._hass, self._url)
         except CannotReachApp:
-            _LOGGER.debug("Can't read the MowBite settings at %s", self._url)
+            _LOGGER.debug("Can't read the MowBite settings at %s", shown_url(self._url))
             if self.failing_since is None:
                 self.failing_since = time.monotonic()
             self._reached()
@@ -146,9 +176,8 @@ BATTERY_LEVEL_PATH = "/cgi-bin/battery?level"
 BATTERY_LEVEL_FROM = 4
 # good for this long after MowBite worked it out (s)
 BATTERY_LEVEL_FRESH = 120
-# the map's pictures, the app's own mowers, docks and garden (MowBite 1.4 and newer), and how big they may be
+# the map's pictures, the app's own mowers, docks and garden (MowBite 1.4 and newer)
 ART_PATH = "/mowbite-art.js"
-ART_MAX = 4_000_000
 STATUS_REFRESH = timedelta(minutes=1)
 # the slower ones every so many refreshes
 SCHEDULE_EVERY = 5
@@ -171,6 +200,9 @@ SKIP_REASONS = [
     "gone",
     "no_area",
     "hold",
+    "clock",
+    "not_docked",
+    "missed",
     "other",
 ]
 
@@ -380,8 +412,8 @@ async def async_read(hass: HomeAssistant, url: str, path: str) -> tuple[int, str
         async with async_get_clientsession(hass).get(
             url.rstrip("/") + path, timeout=aiohttp.ClientTimeout(total=15)
         ) as response:
-            return response.status, await response.text()
-    except (aiohttp.ClientError, TimeoutError, UnicodeDecodeError):
+            return response.status, await read_text(response)
+    except (aiohttp.ClientError, TimeoutError, UnicodeDecodeError, TooBig):
         return 502, ""
 
 
@@ -435,8 +467,8 @@ class AppStatus:
             ) as response:
                 if response.status != 200:
                     return None
-                return await response.text()
-        except (aiohttp.ClientError, TimeoutError, UnicodeDecodeError):
+                return await read_text(response)
+        except (aiohttp.ClientError, TimeoutError, UnicodeDecodeError, TooBig):
             return None
 
     async def _post(self, path: str, body: str = "") -> str | None:
@@ -446,8 +478,8 @@ class AppStatus:
             ) as response:
                 if response.status != 200:
                     return None
-                return await response.text()
-        except (aiohttp.ClientError, TimeoutError, UnicodeDecodeError):
+                return await read_text(response)
+        except (aiohttp.ClientError, TimeoutError, UnicodeDecodeError, TooBig):
             return None
 
     def _changed(self) -> None:
@@ -514,7 +546,7 @@ class AppStatus:
             return None
         if self._art is None or self._art[0] != self._version_read:
             text = await self._get(ART_PATH)
-            if text is None or len(text) > ART_MAX:
+            if text is None:
                 return None
             self._art = (self._version_read, text)
         return self.art_api, self._art[1]

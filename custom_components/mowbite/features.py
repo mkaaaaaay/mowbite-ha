@@ -29,6 +29,7 @@ class Features:
     def __init__(self, hass: HomeAssistant, entry_id: str) -> None:
         self._store: Store[list[str]] = Store(hass, STORAGE_VERSION, f"{DOMAIN}.{entry_id}.features")
         self._have: set[str] = set()
+        self._unsaved = False
         self._listeners: list[Callable[[], None]] = []
 
     async def async_load(self) -> None:
@@ -53,13 +54,23 @@ class Features:
         if not new:
             return
         self._have |= new
-        self._store.async_delay_save(lambda: sorted(self._have), 5)
+        self._unsaved = True
+        self._store.async_delay_save(self._saved, 5)
         for listener in list(self._listeners):
             listener()
 
     def add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
         self._listeners.append(listener)
         return lambda: self._listeners.remove(listener)
+
+    def _saved(self) -> list[str]:
+        self._unsaved = False
+        return sorted(self._have)
+
+    async def async_flush(self) -> None:
+        """Saves now what waits to be saved, nothing is written later."""
+        if self._unsaved:
+            await self._store.async_save(self._saved())
 
     async def async_remove(self) -> None:
         await self._store.async_remove()

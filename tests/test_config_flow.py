@@ -102,3 +102,41 @@ async def test_reconfigure_onto_another_mower(hass: HomeAssistant, probe: AsyncM
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_HOST: "other", CONF_PORT: 1883})
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "already_configured"
+
+
+async def test_the_same_mower_under_another_name(hass: HomeAssistant, probe: AsyncMock) -> None:
+    """Set up by its host name, now by its IP: the same broker, port and prefix is the same mower, not a second one
+    with every entity and notification twice."""
+    MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="openmower.local:1883/openmower/",
+        data={CONF_HOST: "openmower.local", CONF_PORT: 1883, CONF_PREFIX: "openmower/"},
+    ).add_to_hass(hass)
+    addresses = {"openmower.local": {"192.168.2.50"}, "192.168.2.50": {"192.168.2.50"}, "192.168.2.51": {"192.168.2.51"}}
+
+    async def lookup(hass: HomeAssistant, host: str, port: int) -> set[str]:
+        return addresses.get(host, set())
+
+    with patch("custom_components.mowbite.config_flow._addresses", lookup):
+        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], INPUT)
+        assert result["type"] is FlowResultType.ABORT
+        assert result["reason"] == "already_configured"
+        probe.assert_not_awaited()
+
+        # another prefix on that broker is another mower, and so is another broker. told apart by its broker
+        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {**INPUT, CONF_PREFIX: "second"})
+        await hass.async_block_till_done()
+        assert result["type"] is FlowResultType.CREATE_ENTRY
+        assert result["title"] == "OpenMower (192.168.2.50)"
+        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {**INPUT, CONF_HOST: "192.168.2.51"})
+        await hass.async_block_till_done()
+        assert result["type"] is FlowResultType.CREATE_ENTRY
+
+        # a name that can't be looked up says nothing
+        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {**INPUT, CONF_HOST: "elsewhere"})
+        await hass.async_block_till_done()
+        assert result["type"] is FlowResultType.CREATE_ENTRY

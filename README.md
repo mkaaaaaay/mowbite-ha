@@ -21,7 +21,9 @@ mower's MQTT broker directly, no cloud and no extra add-on.
 - **Docked or on the lawn**: from Home Assistant 2026.10 on, a mower that stands still outside the dock shows as
   idle, not as docked, so an automation for "docked" only fires in the dock.
 - **Buttons** for skipping an area and for resetting an emergency stop. The reset is off by default, an
-  emergency stop has a reason out at the mower.
+  emergency stop has a reason out at the mower. Only with that button switched on does the card offer the reset
+  too, and it asks before it sends it. Start, continue and mowing the leftovers are refused while an emergency
+  stop is on, also from an automation.
 - **How far it got**: the area being mowed, how far through it is, the last problem the mower had (a docking
   retry, GPS lost, an emergency stop) and the lawn's area.
 - **Only what your mower has**: the entities below come once the mower or the app first provides the data, and
@@ -158,7 +160,8 @@ The card is MowBite's dashboard: the status with the battery ring, the facts (GP
 left, Wi-Fi, temperatures, and the entities you add), the buttons, the map, and "Today" with what was mowed, the
 last runs, a start the schedule left out, maintenance due and the next start. In the language of your Home
 Assistant user, German or English, with MowBite's own words. Like in the app some buttons only show when they're
-of use: "Skip this path" while the mower mows, "Reset emergency" while an emergency stop is on.
+of use: "Skip this path" while the mower mows, "Reset emergency" while an emergency stop is on (with the
+integration's button for it switched on).
 
 It draws the map the way your MowBite does: its colours, the mower and dock icon, the garden style with the pictures
 picked for the areas, the real edges and the mower's outline. With the MowBite address set and a MowBite that serves

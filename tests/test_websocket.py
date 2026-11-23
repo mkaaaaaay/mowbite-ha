@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 from homeassistant.components.frontend import DATA_EXTRA_MODULE_URL
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator, WebSocketGenerator
@@ -99,6 +100,12 @@ async def test_actions(hass: HomeAssistant, hass_ws_client: WebSocketGenerator, 
         msg = await client.receive_json()
         assert msg["error"]["code"] == "action_unavailable"
 
+        # resetting the emergency stop is a choice: only with the button for it switched on
+        action.reset_mock()
+        await client.send_json_auto_id({"type": "mowbite/action", "entity_id": MOWER, "action": "reset_emergency"})
+        assert (await client.receive_json())["error"]["code"] == "reset_disabled"
+        action.assert_not_awaited()
+        er.async_get(hass).async_update_entity("button.openmower_reset_emergency_stop", disabled_by=None)
         await client.send_json_auto_id({"type": "mowbite/action", "entity_id": MOWER, "action": "reset_emergency"})
         assert (await client.receive_json())["success"]
         assert action.await_args.args == ("mower_logic/reset_emergency",)
@@ -186,6 +193,54 @@ async def test_rpc_reads_only(hass: HomeAssistant, hass_ws_client: WebSocketGene
         answer = await client.receive_json()
         assert not answer["success"] and answer["error"]["code"] == "not_allowed", method
     assert asked == [("events.history", {"date": "20261018"})]
+
+
+async def test_rpc_only_the_parameters_the_apps_pages_send(
+    hass: HomeAssistant, hass_ws_client: WebSocketGenerator, mower: Mower
+) -> None:
+    asked = []
+
+    async def rpc(method, params=None, timeout=20):
+        asked.append((method, params))
+        return {}
+
+    mower.async_rpc = rpc  # type: ignore[method-assign]
+    client = await hass_ws_client(hass)
+    for method, params in (
+        ("position.history.list", ["x"]),
+        ("position.history", {"job_id": "j", "delete": True}),
+        ("position.history", {"job_id": {"$ne": ""}}),
+        ("planner.log", {"since": [1]}),
+        ("planner.leftovers", {"job_id": "j", "arm": 1}),
+        ("events.history", {"date": True}),
+    ):
+        await client.send_json_auto_id({"type": "mowbite/rpc", "entity_id": MOWER, "method": method, "params": params})
+        answer = await client.receive_json()
+        assert not answer["success"] and answer["error"]["code"] == "not_allowed", (method, params)
+    assert asked == []
+    # an empty list is how the app asks without parameters
+    for method, params in (
+        ("position.history.list", []),
+        ("position.history", {"job_id": "j"}),
+        ("planner.log", {"since": 12.5, "limit": 200}),
+        ("planner.leftovers", {"job_id": "j", "area_id": "front"}),
+    ):
+        await client.send_json_auto_id({"type": "mowbite/rpc", "entity_id": MOWER, "method": method, "params": params})
+        assert (await client.receive_json())["success"], (method, params)
+    assert asked[0] == ("position.history.list", {})
+
+
+async def test_the_card_knows_whether_it_may_reset_the_emergency_stop(
+    hass: HomeAssistant, hass_ws_client: WebSocketGenerator, mower: Mower
+) -> None:
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id({"type": "mowbite/subscribe", "entity_id": MOWER})
+    assert (await client.receive_json())["success"]
+    assert (await client.receive_json())["event"]["reset_emergency"] is False
+    er.async_get(hass).async_update_entity("button.openmower_reset_emergency_stop", disabled_by=None)
+    send(mower, "robot_state/json", {**ROBOT_STATE, "emergency": 1})
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=1))
+    assert (await client.receive_json())["event"]["reset_emergency"] is True
 
 
 async def test_rpc_plan_waits_longer(hass: HomeAssistant, hass_ws_client: WebSocketGenerator, mower: Mower) -> None:

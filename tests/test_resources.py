@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 from homeassistant.components.lovelace.const import LOVELACE_DATA
 from homeassistant.core import HomeAssistant
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from homeassistant.util import dt as dt_util
+from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.mowbite import BLUEPRINT_FILE, BLUEPRINT_SOURCE, CARD_PATH, install_blueprint
 from custom_components.mowbite.mower import Mower
+
+from .conftest import send
 
 
 def _resources(hass: HomeAssistant) -> list[dict[str, Any]]:
@@ -54,6 +58,24 @@ async def test_removed_with_the_last_mower(hass: HomeAssistant, entry: MockConfi
     assert await hass.config_entries.async_remove(entry.entry_id)
     await hass.async_block_till_done()
     assert not any(r["url"].startswith(CARD_PATH) for r in _resources(hass))
+
+
+async def test_nothing_kept_of_a_removed_mower(
+    hass: HomeAssistant, hass_storage: dict[str, Any], entry: MockConfigEntry, mower: Mower
+) -> None:
+    """What the integration keeps of a mower goes with it, also what was still waiting to be saved."""
+    kept = [f"mowbite.{entry.entry_id}.snooze", f"mowbite.{entry.entry_id}.features"]
+    send(mower, "events/json", {"id": "1", "type": "DOCKED"})
+    entry.runtime_data.snooze.turn_off()
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    # unloaded, both are saved right away: nothing is written after the mower is gone
+    assert hass_storage[kept[0]]["data"] == {"off": True, "until": None}
+    assert "events" in hass_storage[kept[1]]["data"]
+    assert await hass.config_entries.async_remove(entry.entry_id)
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=30))
+    await hass.async_block_till_done()
+    assert not any(key in hass_storage for key in kept)
 
 
 def test_the_app_files_come_along() -> None:

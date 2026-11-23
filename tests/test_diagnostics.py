@@ -108,3 +108,35 @@ async def test_no_repair_while_the_mower_is_off(
     app.failing_since = time.monotonic() - 601
     await app.async_refresh()
     assert ir.async_get(hass).async_get_issue(DOMAIN, f"app_unreachable_{entry.entry_id}") is None
+
+
+async def test_a_login_in_the_apps_address_stays_home(
+    hass: HomeAssistant,
+    hass_client: ClientSessionGenerator,
+    aioclient_mock: AiohttpClientMocker,
+    entry: MockConfigEntry,
+    no_connection: None,
+) -> None:
+    """Someone put a login into the MowBite address: not in the diagnostics, the repair or the log."""
+    url = "http://me:hunter2@openmower:8080"
+    aioclient_mock.get("http://me:hunter2@openmower:8080/cgi-bin/settings", status=404)
+    app_status(aioclient_mock, url)
+    entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(entry, options={CONF_APP_URL: url})
+    assert await async_setup_component(hass, "diagnostics", {})
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    mower: Mower = entry.runtime_data.mower
+    mower._connected = True
+    send(mower, "robot_state/json", ROBOT_STATE)
+    await hass.async_block_till_done()
+
+    diagnostics = await get_diagnostics_for_config_entry(hass, hass_client, entry)
+    assert diagnostics["entry"]["options"][CONF_APP_URL] == "http://openmower:8080"
+    assert "hunter2" not in str(diagnostics)
+
+    app = entry.runtime_data.app
+    app.failing_since = time.monotonic() - 601
+    await app.async_refresh()
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, f"app_unreachable_{entry.entry_id}")
+    assert issue is not None and issue.translation_placeholders == {"name": "OpenMower", "url": "http://openmower:8080"}

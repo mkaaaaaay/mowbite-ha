@@ -57,9 +57,9 @@ def _state(mower: Mower) -> str | None:
 
 
 def _accuracy(mower: Mower) -> float | None:
-    accuracy = ((mower.state or {}).get("pose") or {}).get("pos_accuracy")
+    accuracy = finite_number(mower.pose.get("pos_accuracy"))
     # 999 and more is no fix at all, not an accuracy
-    return round(accuracy, 3) if isinstance(accuracy, (int, float)) and accuracy < 999 else None
+    return round(accuracy, 3) if accuracy is not None and accuracy < 999 else None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -277,6 +277,13 @@ def _leftover_areas(data: MowbiteData) -> dict[str, Any]:
     return {"areas": areas}
 
 
+def _not_planned(data: MowbiteData) -> dict[str, Any]:
+    """The areas the planner can't plan as they are, each with its code for why (body_out, no_plan,
+    start_unreachable)."""
+    names = {area.get("id"): (area.get("properties") or {}).get("name") for area in mow_areas(data.mower.map)}
+    return {"not_planned": {names.get(area_id) or area_id: code.lower() for area_id, code in data.planning.refused.items()}}
+
+
 @dataclass(frozen=True, kw_only=True)
 class MowbiteDataSensorDescription(SensorEntityDescription):
     """A value from what's kept next to the mower: its plans, the planner, the app's status."""
@@ -335,6 +342,7 @@ DATA_SENSORS = (
         native_unit_of_measurement=UnitOfTime.MINUTES,
         suggested_display_precision=0,
         value_fn=lambda data: _round(data.planning.job_minutes),
+        attributes_fn=_not_planned,
         feature=RPC + PLANNER_PLAN,
         listen=(KEY_PLANNING,),
     ),

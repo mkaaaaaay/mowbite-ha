@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from homeassistant.core import HomeAssistant
@@ -11,15 +12,20 @@ from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
+from custom_components.mowbite import app as app_module
 from custom_components.mowbite.app import (
+    async_read,
     next_start,
     parse_schedule,
+    parse_schedule_log,
     parse_stats,
     part_hours_left,
     schedule_starts,
+    shown_url,
+    skip_reason,
     stats_since,
 )
-from custom_components.mowbite.const import CONF_APP_URL
+from custom_components.mowbite.const import CONF_APP_URL, MOWER_LABELS, MOWER_MODELS, SIZE_KEYS
 from custom_components.mowbite.mower import Mower
 
 from .conftest import ROBOT_STATE, app_status, send
@@ -143,3 +149,40 @@ async def test_gps_fix(hass: HomeAssistant, mower: Mower) -> None:
     send(mower, "robot_state/json", {**ROBOT_STATE, "pose": {**ROBOT_STATE["pose"], "pos_accuracy": 999}})
     await hass.async_block_till_done()
     assert hass.states.get("binary_sensor.openmower_gps_fix").state == "off"
+
+
+async def test_an_answer_too_big_is_none(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
+    """The app's answers are read up to a size, not whatever comes into memory."""
+    url = "http://openmower:8082"
+    aioclient_mock.get(url + "/cgi-bin/system", text="uptime 5\n")
+    aioclient_mock.get(url + "/cgi-bin/stats", text="x" * 5000)
+    assert await async_read(hass, url, "/cgi-bin/system") == (200, "uptime 5\n")
+    with patch.object(app_module, "ANSWER_MAX", 4999):
+        assert await async_read(hass, url, "/cgi-bin/stats") == (502, "")
+    with patch.object(app_module, "ANSWER_MAX", 5000):
+        assert (await async_read(hass, url, "/cgi-bin/stats"))[0] == 200
+
+
+def test_shown_url() -> None:
+    assert shown_url("http://me:secret@openmower:8082") == "http://openmower:8082"
+    assert shown_url("http://openmower:8082") == "http://openmower:8082"
+    assert shown_url(None) == ""
+
+
+def test_skipped_starts_the_scheduler_knows_now() -> None:
+    for word in ("clock", "not_docked", "missed"):
+        assert skip_reason(parse_schedule_log(f"1000 started\n2000 skip_{word}\n")) == word
+    # words that aren't a skipped start leave the newest one as it is, one not known yet shows as another reason
+    log = parse_schedule_log("2000 skip_rain\n2100 retry_skip clock\n2200 leftovers_skip undocked\n2300 weather_unknown\n")
+    assert (log["skipped"], skip_reason(log)) == (2000, "rain")
+    assert skip_reason(parse_schedule_log("3000 skip_something_new\n")) == "other"
+
+
+def test_mower_models_are_the_apps() -> None:
+    """The models come from MowBite's own table (mower_models.json), each with a name and all the sizes."""
+    assert MOWER_MODELS["yf_nx"] == {"width": 0.41, "front": 0.43, "rear": 0.18, "blade": 0.18, "bladeAhead": 0.185, "bladeOffset": 0}
+    assert len(MOWER_MODELS) >= 4 and MOWER_MODELS.keys() == MOWER_LABELS.keys()
+    for key, sizes in MOWER_MODELS.items():
+        assert key == key.lower() and "-" not in key
+        assert sorted(sizes) == sorted(SIZE_KEYS)
+        assert MOWER_LABELS[key]

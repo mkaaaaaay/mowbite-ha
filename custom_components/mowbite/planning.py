@@ -53,6 +53,15 @@ AFTER_DOCKING = 30
 # an area whose plan didn't come is asked again after this long at the earliest (seconds), on its own that many times
 RETRY_PLAN = 60
 RETRIES = 5
+# a plan that came for a map or settings that changed meanwhile is asked again right away, this often
+PLAN_TRIES = 3
+# the planner's own codes for an area it can't plan as it is (error.data.code): asking again changes nothing, the
+# code says why, never the text
+FINAL_REFUSALS = ("BODY_OUT", "NO_PLAN", "START_UNREACHABLE")
+# what the mower offers is asked again after this long when it didn't tell (seconds), each time twice as long up to
+# the longest: ROS may come up after the broker, a mower without rpc never answers
+HELLO_RETRY = 30
+HELLO_RETRY_MAX = 600
 
 
 def mow_areas(map_data: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -188,6 +197,10 @@ class Planning:
         # area id -> trimmed plan, for the map as it was when they were asked
         self.plans: dict[str, dict[str, Any]] = {}
         self._plans_for: int | None = None
+        # area id -> the planner's code for why it can't plan it (FINAL_REFUSALS), for that map and those settings
+        self.refused: dict[str, str] = {}
+        # goes up when the plans are dropped, an answer asked before is for what was
+        self._plans_version = 0
         self._asking: set[str] = set()
         self._failed: dict[str, float] = {}
         # area id -> how often its plan was asked again on its own for this map, and the wait for the next time
@@ -211,6 +224,10 @@ class Planning:
         # robot_state came and wasn't stale: ROS is up
         self._available = False
         self._hello_running = False
+        self._hello_again = False
+        self._hello_retry: Callable[[], None] | None = None
+        self._hello_wait = HELLO_RETRY
+        self._stopped = False
         self._texts = Texts(hass.config.language)
 
     @callback
@@ -222,8 +239,10 @@ class Planning:
         ]
 
         def stop() -> None:
+            self._stopped = True
             for remove in removes:
                 remove()
+            self._cancel_hello_retry()
             if self._after_docking is not None:
                 self._after_docking()
             for cancel in self._retrying.values():
@@ -239,7 +258,10 @@ class Planning:
     def plan_method(self) -> str | None:
         """planner.plan while the MowBite Planner plans itself. Never mowing.plan then: the planner takes that for
         mower_logic fetching its plan, the job isn't timed and prepared leftovers are gone. Planning with slic3r it
-        hands mowing.plan on to slic3r untouched, and only that is exactly mower_logic's plan"""
+        hands mowing.plan on to slic3r untouched, and only that is exactly mower_logic's plan. None while a planner
+        with settings hasn't told them: which of the two it is isn't known then"""
+        if self.has(SETTINGS) and self.settings is None:
+            return None
         if self.has(PLANNER_PLAN) and self.planner_mode != "slic3r":
             return PLANNER_PLAN
         if self.has(PLAN):
@@ -371,6 +393,8 @@ class Planning:
             else:
                 self.methods = None
                 self._ready = False
+                self._cancel_hello_retry()
+                self._hello_wait = HELLO_RETRY
         if mower.available != self._available:
             self._available = mower.available
             # the broker may have been up before ROS, rpc.methods had no answer then
@@ -385,7 +409,7 @@ class Planning:
                 self._ask(self._async_plans())
         # a job running from before Home Assistant came: the area it's on is known only from robot_state
         area_id = self.area_id
-        if area_id and area_id not in self.plans and self._ready and self.plan_method:
+        if area_id and area_id not in self.plans and area_id not in self.refused and self._ready and self.plan_method:
             self._ask(self._async_plan(area_id))
 
     @callback
@@ -458,12 +482,18 @@ class Planning:
     @callback
     def _hello(self) -> None:
         """Asks what the mower offers and how its planner is set, once at a time."""
-        if self._hello_running or not self._mower.connected:
+        if not self._mower.connected:
             return
+        if self._hello_running:
+            # something changed while it was being asked: once more after this one
+            self._hello_again = True
+            return
+        self._cancel_hello_retry()
         self._hello_running = True
         self._ask(self._async_hello())
 
     async def _async_hello(self) -> None:
+        told = False
         try:
             methods = await self._rpc("rpc.methods")
             if not isinstance(methods, list):
@@ -471,25 +501,65 @@ class Planning:
             self.methods = {m for m in methods if isinstance(m, str)}
             self._features.add(RPC + method for method in self.methods)
             # which way plans are asked depends on the planner's settings, nothing is planned before they came
-            await self._async_settings()
+            if not await self._async_settings():
+                return
+            told = True
             self._ready = True
+            self._hello_wait = HELLO_RETRY
             await self._async_history()
             await self._async_after_job()
         finally:
             self._hello_running = False
+            if self._hello_again:
+                self._hello_again = False
+                self._hello()
+            elif not told:
+                self._retry_hello()
 
-    async def _async_settings(self) -> None:
-        if not self.has(SETTINGS):
+    @callback
+    def _retry_hello(self) -> None:
+        if self._stopped or not self._mower.connected or self._hello_retry is not None:
             return
+
+        @callback
+        def again(_now: Any) -> None:
+            self._hello_retry = None
+            self._hello()
+
+        self._hello_retry = async_call_later(self._hass, self._hello_wait, again)
+        self._hello_wait = min(self._hello_wait * 2, HELLO_RETRY_MAX)
+
+    @callback
+    def _cancel_hello_retry(self) -> None:
+        if self._hello_retry is not None:
+            self._hello_retry()
+            self._hello_retry = None
+
+    def _forget_plans(self) -> None:
+        """The plans were for other settings, one still on its way is too. All of them are asked again."""
+        self.plans = {}
+        self.refused = {}
+        self._plans_for = None
+        self._plans_version += 1
+
+    async def _async_settings(self) -> bool:
+        """Reads the planner's settings, False when it has some and didn't tell them."""
+        if not self.has(SETTINGS):
+            return True
         result = await self._rpc(SETTINGS, {})
-        if isinstance(result, dict) and isinstance(result.get("settings"), dict):
-            mode = self.planner_mode
-            self.settings = result["settings"]
-            if self.planner_mode != mode:
-                # the plans came the other way, they're asked again
-                self.plans = {}
-                self._plans_for = None
-            self._mower.notify(KEY_PLANNING)
+        if not isinstance(result, dict) or not isinstance(result.get("settings"), dict):
+            return False
+        mode = self.planner_mode
+        self.settings = result["settings"]
+        if self.planner_mode != mode:
+            # the plans came the other way
+            self._forget_plans()
+        self._mower.notify(KEY_PLANNING)
+        return True
+
+    async def async_plan_method(self) -> str | None:
+        """plan_method with the planner's settings as they are right now, they may have been changed in the app."""
+        return self.plan_method if await self._async_settings() else None
 
     async def async_set_setting(self, name: str, value: Any) -> None:
         """Changes one of the planner's settings, raises RpcError or CannotConnect. Plans are asked again."""
@@ -499,8 +569,7 @@ class Planning:
         else:
             await self._async_settings()
         self._mower.notify(KEY_PLANNING)
-        self.plans = {}
-        self._plans_for = None
+        self._forget_plans()
         self._ask(self._async_plans())
 
     async def _async_history(self) -> None:
@@ -518,43 +587,84 @@ class Planning:
                     self._mower.add_job_area(event.get("job_id"), event.get("area_id"))
                 self._note_problem(event)
 
+    @property
+    def _busy(self) -> bool:
+        """The mower drives or mows: a plan the planner hasn't kept costs its computer time then."""
+        return (self._mower.state or {}).get("current_state") not in (None, "IDLE")
+
     async def _async_plans(self) -> None:
         """Every active area's plan once per map, for the whole job's time and area, after a job the ones that didn't
-        come. Not while mowing: a plan the planner hasn't kept costs the mower's computer time, the area being mowed
-        is asked on its own"""
-        method = self.plan_method
+        come. Only while the mower is idle, looked at before each area, the area being mowed is asked on its own"""
         mower = self._mower
-        if method is None or (mower.state or {}).get("current_state") == "MOWING":
+        if self._busy:
+            return
+        # once for all of them: how the planner plans may have been changed in the app
+        told = await self._async_settings()
+        if told and self.plan_method is None:
             return
         if self._plans_for != mower.map_version:
             self._plans_for = mower.map_version
             self.plans = {}
+            self.refused = {}
             self._retries = {}
         for area in mow_areas(mower.map):
-            if is_active(area) and area.get("id") and area["id"] not in self.plans:
-                await self._async_plan(area["id"])
+            if self._busy:
+                return
+            area_id = area.get("id")
+            if is_active(area) and area_id and area_id not in self.plans and area_id not in self.refused:
+                await self._async_plan(area_id, told)
 
-    async def _async_plan(self, area_id: str) -> None:
-        method = self.plan_method
-        if method is None or area_id in self._asking:
+    async def _async_plan(self, area_id: str, told: bool = False) -> None:
+        """told: the planner's settings were read just now."""
+        if area_id in self._asking or area_id in self.refused:
             return
         if time.monotonic() - self._failed.get(area_id, -RETRY_PLAN) < RETRY_PLAN:
             return
         self._asking.add(area_id)
         try:
-            # never the poses, they're about a megabyte per area
-            plan = trim_plan(await self._rpc(method, {"area_id": area_id}, PLAN_TIMEOUT))
+            plan, refused = await self._async_ask_plan(area_id, told)
         finally:
             self._asking.discard(area_id)
-        if plan is None:
+        if plan is None and refused is None:
             self._failed[area_id] = time.monotonic()
             self._retry(area_id)
             return
         self._failed.pop(area_id, None)
         self._retries.pop(area_id, None)
-        self.plans[area_id] = plan
+        if plan is not None:
+            self.plans[area_id] = plan
+        else:
+            self.refused[area_id] = refused
         self.version += 1
         self._mower.notify(KEY_PLANNING)
+
+    async def _async_ask_plan(self, area_id: str, told: bool) -> tuple[dict[str, Any] | None, str | None]:
+        """The area's plan, or the planner's code for why there is none, neither when it didn't come."""
+        mower = self._mower
+        for _ in range(PLAN_TRIES):
+            # the settings first: a planner switched to planning itself in the app must not get mowing.plan
+            if not told and not await self._async_settings():
+                return None, None
+            told = False
+            method = self.plan_method
+            if method is None:
+                return None, None
+            asked = (mower.map_version, self._plans_version)
+            refused = None
+            try:
+                # never the poses, they're about a megabyte per area
+                plan = trim_plan(await mower.async_rpc(method, {"area_id": area_id}, PLAN_TIMEOUT))
+            except RpcError as err:
+                _LOGGER.debug("%s didn't answer %s for %s: %s", mower.host, method, area_id, err)
+                code = err.data.get("code") if isinstance(err.data, dict) else None
+                plan, refused = None, code if code in FINAL_REFUSALS else None
+            except (CannotConnect, TimeoutError, aiomqtt.MqttError) as err:
+                _LOGGER.debug("%s didn't answer %s for %s: %s", mower.host, method, area_id, err)
+                return None, None
+            # an answer for a map or settings that changed while the planner worked is the old one's
+            if asked == (mower.map_version, self._plans_version):
+                return plan, refused
+        return None, None
 
     @callback
     def _retry(self, area_id: str) -> None:
@@ -569,10 +679,10 @@ class Planning:
         def again(_now: Any) -> None:
             self._retrying.pop(area_id, None)
             mower = self._mower
-            # not while mowing, the area being mowed is asked on its own then, and not an area the map lost
+            # only while idle, the area being mowed is asked on its own, and not an area the map lost
             if area_id in self.plans or not self._ready or not mower.connected:
                 return
-            if (mower.state or {}).get("current_state") == "MOWING":
+            if self._busy:
                 return
             if not any(area.get("id") == area_id and is_active(area) for area in mow_areas(mower.map)):
                 return
@@ -600,8 +710,7 @@ class Planning:
 
     async def _async_after_job(self) -> None:
         """What the last job left uncut and where it came too close to an edge, once after each job. The plans too,
-        they aren't asked while mowing. The settings first, they may have been changed in the app"""
-        await self._async_settings()
+        they aren't asked while mowing (with the settings first, they may have been changed in the app)"""
         await self._async_plans()
         changed = False
         if self.has(LEFTOVERS):
@@ -649,8 +758,7 @@ class Planning:
 
     async def async_reset_angle(self) -> None:
         await self._mower.async_rpc(ANGLE_RESET, {})
-        self.plans = {}
-        self._plans_for = None
+        self._forget_plans()
         self._ask(self._async_plans())
 
     def card(self) -> dict[str, Any]:

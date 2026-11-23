@@ -404,13 +404,16 @@ async def test_with_the_planner(hass: HomeAssistant, entry: MockConfigEntry, no_
 async def test_setting_changes_while_idle(hass: HomeAssistant, entry: MockConfigEntry, no_connection: None) -> None:
     answers = dict(PLANNER_ANSWERS)
 
+    kept = copy.deepcopy(SETTINGS)
+
     def set_setting(params: dict[str, Any]) -> dict[str, Any]:
-        changed = copy.deepcopy(SETTINGS)
         for name, value in params.items():
-            changed["settings"][name]["value"] = value
-        return changed
+            kept["settings"][name]["value"] = value
+        return copy.deepcopy(kept)
 
     answers["planner.settings.set"] = set_setting
+    # asked again before the plans, the planner has what was set
+    answers["planner.settings"] = lambda params: copy.deepcopy(kept)
     rpc = FakeRpc(answers)
     mower = await setup_mower(hass, entry, rpc)
     send(mower, "map/json", MAP)
@@ -804,3 +807,147 @@ async def test_leftover_run_stays_for_the_job(hass: HomeAssistant, entry: MockCo
     # the job done, the flag goes with it
     send(mower, "events/json", {"type": "JOB_COMPLETE", "job_id": "j", "t": 950, "id": "c1"})
     assert entry.runtime_data.planning._leftover_runs == set()
+
+
+async def test_planner_switched_in_the_app(hass: HomeAssistant, entry: MockConfigEntry, no_connection: None, hass_ws_client: WebSocketGenerator) -> None:
+    """Switched from slic3r to planning itself in the app, Home Assistant still has slic3r: the settings are read
+    before each plan, the planner never gets mowing.plan then."""
+    kept = {"settings": {**SETTINGS["settings"], "planner": {"value": "slic3r", "type": "string", "settable": True}}}
+    rpc = FakeRpc(
+        {
+            **PLANNER_ANSWERS,
+            "planner.settings": lambda params: copy.deepcopy(kept),
+            "mowing.plan": lambda params: plan(params["area_id"]),
+        }
+    )
+    mower = await setup_mower(hass, entry, rpc)
+    send(mower, "map/json", MAP)
+    await hass.async_block_till_done()
+    assert {method for method, _ in rpc.calls if method.endswith(".plan")} == {"mowing.plan"}
+
+    kept["settings"]["planner"]["value"] = "mowbite"
+    rpc.calls.clear()
+    send(mower, "events/json", {"type": "AREA", "area_id": "front", "area_name": "Front", "job_id": "j", "t": 2, "id": "a1"})
+    send(mower, "robot_state/json", {**ROBOT_STATE, "current_state": "MOWING"})
+    await hass.async_block_till_done()
+    assert "mowing.plan" not in {method for method, _ in rpc.calls}
+    assert ("planner.plan", {"area_id": "front"}) in rpc.calls
+
+    # the card isn't let through with it either, on the settings as they are now
+    kept["settings"]["planner"]["value"] = "slic3r"
+    entry.runtime_data.planning.settings = copy.deepcopy(kept["settings"])
+    kept["settings"]["planner"]["value"] = "mowbite"
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(
+        {"type": "mowbite/rpc", "entity_id": "lawn_mower.openmower", "method": "mowing.plan", "params": {"area_id": "front"}}
+    )
+    assert (await client.receive_json())["error"]["code"] == "not_allowed"
+
+
+async def test_an_area_the_planner_cant_plan(hass: HomeAssistant, entry: MockConfigEntry, no_connection: None, freezer: Any) -> None:
+    """The planner's own code says the area can't be planned as it is: not asked again and again, told why."""
+
+    def planner_plan(params: dict[str, Any]) -> dict[str, Any]:
+        if params["area_id"] == "back":
+            raise RpcError("the mower's body doesn't fit into the area", -32000, {"code": "BODY_OUT"})
+        return PLANNER_ANSWERS["planner.plan"](params)
+
+    rpc = FakeRpc({**PLANNER_ANSWERS, "planner.plan": planner_plan})
+    mower = await setup_mower(hass, entry, rpc)
+    send(mower, "map/json", MAP)
+    await hass.async_block_till_done()
+    for _ in range(3):
+        freezer.tick(timedelta(seconds=planning_module.RETRY_PLAN + 1))
+        async_fire_time_changed(hass)
+        send(mower, "robot_state/json", ROBOT_STATE)
+        await hass.async_block_till_done()
+    assert [params["area_id"] for method, params in rpc.calls if method == "planner.plan"] == ["front", "back"]
+    duration = hass.states.get("sensor.openmower_duration_for_all_areas")
+    assert duration.state == "unknown"
+    assert duration.attributes["not_planned"] == {"Back": "body_out"}
+
+    # another map: asked anew
+    rpc.answers["planner.plan"] = PLANNER_ANSWERS["planner.plan"]
+    send(mower, "map/json", MAP)
+    await hass.async_block_till_done()
+    duration = hass.states.get("sensor.openmower_duration_for_all_areas")
+    assert duration.state == "60" and duration.attributes["not_planned"] == {}
+
+
+async def test_a_plan_for_the_map_before_isnt_kept(hass: HomeAssistant, entry: MockConfigEntry, no_connection: None) -> None:
+    """The map changed while the planner worked on a plan: that answer is the old map's, the area is asked again."""
+    mower_ref: list[Mower] = []
+    asked = []
+
+    def planner_plan(params: dict[str, Any]) -> dict[str, Any]:
+        asked.append(params["area_id"])
+        if asked == ["front"]:
+            # the map comes while the first plan is on its way
+            send(mower_ref[0], "map/json", MAP)
+            return plan("front", 99, 90)
+        return PLANNER_ANSWERS["planner.plan"](params)
+
+    rpc = FakeRpc({**PLANNER_ANSWERS, "planner.plan": planner_plan})
+    mower = await setup_mower(hass, entry, rpc)
+    mower_ref.append(mower)
+    send(mower, "map/json", MAP)
+    await hass.async_block_till_done()
+    assert asked.count("front") == 2
+    assert entry.runtime_data.planning.plans["front"]["minutes"] == 40
+    assert hass.states.get("sensor.openmower_duration_for_all_areas").state == "60"
+
+
+async def test_no_plans_ahead_while_it_drives(hass: HomeAssistant, entry: MockConfigEntry, no_connection: None) -> None:
+    """All areas' plans are asked only while the mower is idle, also not while it heads home or is paused."""
+    rpc = FakeRpc(PLANNER_ANSWERS)
+    mower = await setup_mower(hass, entry, rpc)
+    for state in ("DOCKING", "UNDOCKING", "PAUSED"):
+        send(mower, "robot_state/json", {**ROBOT_STATE, "current_state": state})
+        send(mower, "map/json", MAP)
+        await hass.async_block_till_done()
+    assert not any(method == "planner.plan" for method, _ in rpc.calls)
+    send(mower, "robot_state/json", ROBOT_STATE)
+    send(mower, "map/json", MAP)
+    await hass.async_block_till_done()
+    assert sorted(params["area_id"] for method, params in rpc.calls if method == "planner.plan") == ["back", "front"]
+
+
+async def test_asked_again_until_the_mower_tells_what_it_offers(
+    hass: HomeAssistant, entry: MockConfigEntry, no_connection: None, freezer: Any
+) -> None:
+    """rpc.methods or the planner's settings without an answer (ROS still starting): asked again after a while, each
+    time later, and nothing is planned before the planner told how it plans."""
+    answers = dict(PLANNER_ANSWERS)
+    settings = answers.pop("planner.settings")
+    rpc = FakeRpc(answers)
+    mower = await setup_mower(hass, entry, rpc)
+    send(mower, "map/json", MAP)
+    await hass.async_block_till_done()
+    planning = entry.runtime_data.planning
+    assert planning.plan_method is None
+    assert not any(method.endswith(".plan") for method, _ in rpc.calls)
+
+    def hellos() -> int:
+        return len([method for method, _ in rpc.calls if method == "rpc.methods"])
+
+    assert hellos() == 1
+    for wait, expected in ((planning_module.HELLO_RETRY + 1, 2), (planning_module.HELLO_RETRY + 1, 2), (planning_module.HELLO_RETRY + 1, 3)):
+        freezer.tick(timedelta(seconds=wait))
+        async_fire_time_changed(hass)
+        send(mower, "robot_state/json", ROBOT_STATE)
+        await hass.async_block_till_done()
+        assert hellos() == expected
+
+    rpc.answers["planner.settings"] = settings
+    freezer.tick(timedelta(seconds=4 * planning_module.HELLO_RETRY + 1))
+    async_fire_time_changed(hass)
+    send(mower, "robot_state/json", ROBOT_STATE)
+    await hass.async_block_till_done()
+    assert hellos() == 4
+    assert sorted(params["area_id"] for method, params in rpc.calls if method == "planner.plan") == ["back", "front"]
+    # it told, nothing more to ask
+    freezer.tick(timedelta(seconds=planning_module.HELLO_RETRY_MAX + 1))
+    async_fire_time_changed(hass)
+    send(mower, "robot_state/json", ROBOT_STATE)
+    await hass.async_block_till_done()
+    assert hellos() == 4

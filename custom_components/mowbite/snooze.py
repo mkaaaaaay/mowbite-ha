@@ -37,6 +37,7 @@ class Snooze:
         # paused until then
         self.until: datetime | None = None
         self._timer: CALLBACK_TYPE | None = None
+        self._unsaved = False
         self._listeners: list[Callable[[], None]] = []
 
     @property
@@ -91,9 +92,20 @@ class Snooze:
         self.until = None
         self._changed()
 
+    def _saved(self) -> dict[str, Any]:
+        self._unsaved = False
+        return {"off": self.off, "until": self.until.isoformat() if self.until else None}
+
     def _changed(self) -> None:
-        self._store.async_delay_save(
-            lambda: {"off": self.off, "until": self.until.isoformat() if self.until else None}, 1
-        )
+        self._unsaved = True
+        self._store.async_delay_save(self._saved, 1)
         for listener in list(self._listeners):
             listener()
+
+    async def async_flush(self) -> None:
+        """Saves now what waits to be saved, nothing is written later."""
+        if self._unsaved:
+            await self._store.async_save(self._saved())
+
+    async def async_remove(self) -> None:
+        await self._store.async_remove()

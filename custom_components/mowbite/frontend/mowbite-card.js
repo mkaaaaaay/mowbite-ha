@@ -87,6 +87,13 @@ const DE = {
   Continue: 'Weiter',
   'Undo ({n} s)': 'Rück­gängig ({n} s)',
   'Reset emergency': 'Notaus zurücksetzen',
+  'Reset the emergency stop? Only with nobody at the mower, it may drive on.':
+    'Notaus zurücksetzen? Nur wenn niemand am Mäher ist, er kann danach weiterfahren.',
+  'Reset it': 'Zurücksetzen',
+  'The emergency stop is on, reset it first.': 'Der Notaus ist aktiv, erst zurücksetzen.',
+  "The mower doesn't take that right now.": 'Das nimmt der Mäher gerade nicht an.',
+  'Not connected to the mower.': 'Keine Verbindung zum Mäher.',
+  'Resetting the emergency stop from here is switched off.': 'Das Zurücksetzen des Notaus von hier ist ausgeschaltet.',
   'waiting for the mower…': 'warte auf den Mäher…',
   'connecting…': 'verbinde…',
   'Drop the interrupted job': 'Unterbrochenen Job verwerfen',
@@ -682,6 +689,15 @@ function isPin(a) {
   );
 }
 
+// why the integration didn't send an action, by its code, in the card's words
+const ACTION_ERRORS = {
+  emergency_active: 'The emergency stop is on, reset it first.',
+  action_unavailable: "The mower doesn't take that right now.",
+  not_connected: 'Not connected to the mower.',
+  reset_disabled: 'Resetting the emergency stop from here is switched off.',
+};
+// volts on the charging contacts above which the mower counts as in the dock, the mower's own rule (as lawn_mower.py)
+const DOCK_VOLTS = 5;
 // half the mower's length, m, when the app draws it at its real size
 const MOWER_SIZE = 0.4;
 // icons that don't grow with the map are this many pixels, times the size set in the app
@@ -2513,6 +2529,7 @@ class MowbiteCard extends HTMLElement {
     this._skip = null;
     this._skipTimer = null;
     this._confirmReset = false;
+    this._confirmStop = false;
     // the app's dashboard logic and what it asked, the leftovers card's state, the last runs unfolded
     this._app = null;
     this._dash = null;
@@ -2751,8 +2768,9 @@ class MowbiteCard extends HTMLElement {
     try {
       await this._hass.callWS({type: 'mowbite/action', entity_id: this._config.entity, action: name});
     } catch (err) {
+      const known = ACTION_ERRORS[err?.code];
       this.dispatchEvent(
-        new CustomEvent('hass-notification', {detail: {message: err?.message || String(err)}, bubbles: true, composed: true}),
+        new CustomEvent('hass-notification', {detail: {message: known ? this._t(known) : err?.message || String(err)}, bubbles: true, composed: true}),
       );
     }
   }
@@ -2853,7 +2871,12 @@ class MowbiteCard extends HTMLElement {
                 <div class="facts temps"></div>
               </div>
               <div class="controls">
-                <button class="reset" data-button="reset_emergency" hidden></button>
+                <button class="reset" data-button="ask_reset_emergency" hidden></button>
+                <div class="resetJob resetStop" hidden>
+                  <span></span>
+                  <button class="reset" data-button="reset_emergency"></button>
+                  <button data-button="cancel_reset_emergency"></button>
+                </div>
                 <button class="main" data-button="start"></button>
                 <button data-button="pause"></button>
                 <button data-button="home"></button>
@@ -2935,7 +2958,15 @@ class MowbiteCard extends HTMLElement {
         this._confirmReset = false;
         this._update();
         return this._action('reset_job');
+      case 'ask_reset_emergency':
+        this._confirmStop = true;
+        return this._update();
+      case 'cancel_reset_emergency':
+        this._confirmStop = false;
+        return this._update();
       case 'reset_emergency':
+        this._confirmStop = false;
+        this._update();
         return this._action('reset_emergency');
       case 'check_leftovers':
         return this._checkLeftovers();
@@ -3155,7 +3186,7 @@ class MowbiteCard extends HTMLElement {
     const live = !!data.available;
     const current = state.current_state ?? '';
     const driving = DRIVING.has(current);
-    const charger = !!state.is_charging || Number(sensors.om_v_charge) > 20;
+    const charger = !!state.is_charging || Number(sensors.om_v_charge) > DOCK_VOLTS;
     const docked = current === 'IDLE' && charger;
     // MowBite's own battery level while it has one (it stays put when the mower sets off), else OpenMower's
     const battery = data.battery_level ?? Math.round((state.battery_percentage ?? 0) * 100);
@@ -3186,7 +3217,8 @@ class MowbiteCard extends HTMLElement {
       if (driving !== this._wasDriving) this._map.setFollow(driving);
       this._wasDriving = driving;
       this._map.setLight(this._config.blur === false);
-      this._map.setPose(data.position ?? state.pose, emergency);
+      const pose = data.position ?? state.pose;
+      this._map.setPose(pose && finite(pose.x, pose.y) ? {...pose, heading: finite(pose.heading) ? pose.heading : 0} : null, emergency);
       this._map.setTodo(progress?.todo ?? null);
       if (dash) this._map.setLife({...dash.life(this._look(), data.datum, driving), rain: !!state.rain_detected, driving});
     }
@@ -3261,9 +3293,18 @@ class MowbiteCard extends HTMLElement {
     // the mower still offers start while the emergency stop is active, it has to be reset first
     const off = (name) => !live || !this._has(name) || emergency;
     const button = (name) => $(`[data-button="${name}"]`);
-    const reset = button('reset_emergency');
-    reset.hidden = !emergency;
+    // resetting the emergency stop from here is a choice (the integration's button for it switched on) and asked
+    // twice: one tap on a wall tablet doesn't release a mower someone stands at
+    const canReset = emergency && !!data.reset_emergency;
+    if (!canReset) this._confirmStop = false;
+    const reset = button('ask_reset_emergency');
+    reset.hidden = !canReset || this._confirmStop;
     this._button(reset, {icon: 'warning', label: this._t('Reset emergency'), disabled: !live});
+    const confirmStop = $('.resetStop');
+    confirmStop.hidden = !canReset || !this._confirmStop;
+    confirmStop.querySelector('span').textContent = this._t('Reset the emergency stop? Only with nobody at the mower, it may drive on.');
+    this._button(button('reset_emergency'), {icon: 'warning', label: this._t('Reset it'), disabled: !live});
+    button('cancel_reset_emergency').textContent = this._t('Cancel');
     this._button(button('start'), {icon: 'play', label: this._t('Start'), disabled: off('start')});
     const paused = current === 'PAUSED' && this._has('continue');
     this._button(
@@ -3284,7 +3325,7 @@ class MowbiteCard extends HTMLElement {
     if (!canResetJob) this._confirmReset = false;
     button('ask_reset_job').hidden = !canResetJob || this._confirmReset;
     button('ask_reset_job').textContent = this._t('Drop the interrupted job');
-    const confirm = $('.resetJob');
+    const confirm = $('.resetJob:not(.resetStop)');
     confirm.hidden = !canResetJob || !this._confirmReset;
     confirm.querySelector('span').textContent = this._t('Drop the interrupted job? The next start mows from the beginning.');
     button('reset_job').textContent = this._t('Drop it');

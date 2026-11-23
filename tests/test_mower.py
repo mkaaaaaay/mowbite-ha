@@ -58,8 +58,12 @@ def test_bad_positions_are_ignored() -> None:
     send(mower, "position/json", '{"x": NaN, "y": 1}')
     send(mower, "position/json", {"x": True, "y": 1})
     assert mower.position is None
-    send(mower, "position/json", {"x": 1, "y": None, "heading": "north", "attributes": ["job"]})
-    assert mower.position == {"x": 1.0, "y": 0.0, "heading": 0.0, "blades": False, "job_id": ""}
+    # half a place is no place
+    send(mower, "position/json", {"x": 1, "y": None})
+    send(mower, "position/json", {"x": 1})
+    assert mower.position is None
+    send(mower, "position/json", {"x": 1, "y": 2, "heading": "north", "attributes": ["job"]})
+    assert mower.position == {"x": 1.0, "y": 2.0, "heading": 0.0, "blades": False, "job_id": ""}
     send(mower, "position/json", {"x": 2, "y": 3, "attributes": {"job_id": 7, "blades": True}})
     assert mower.position["job_id"] == "" and mower.position["blades"] is True
 
@@ -318,6 +322,73 @@ def test_refusal() -> None:
     send(mower, "robot_state/json", ROBOT_STATE)
     with patch.object(mower_module.time, "monotonic", return_value=mower_module.time.monotonic() + mower_module.STALE_AFTER + 1):
         assert mower.refusal(start) == "action_unavailable"
+
+
+def test_only_finite_numbers() -> None:
+    mower = _mower()
+    send(mower, "sensors/om_v_battery/data", "26.4")
+    for bad in ("nan", "inf", "-inf"):
+        send(mower, "sensors/om_v_battery/data", bad)
+    assert mower.sensors == {"om_v_battery": 26.4}
+    # a datum that isn't a number is no datum, the tracker would work out a place with it
+    send(mower, "params/json", '{"/ll/services/gps/datum_lat": NaN, "/ll/services/gps/datum_long": 10.5}')
+    assert mower.datum is None
+    send(mower, "params/json", {"/ll/services/gps/datum_lat": 52.2, "/ll/services/gps/datum_long": 10.5})
+    assert mower.datum == {"lat": 52.2, "lon": 10.5}
+    history = {
+        "segments": [
+            {"attributes": {"blades": True}, "points": [[0, 0], ["1", 0], [1, None], [2, 0, 9]]},
+            {"attributes": "nope", "points": [[3, 0]]},
+            "nope",
+        ],
+        "buffer": [[4, 0], [float("nan"), 0], "nope"],
+    }
+    assert mower_module._history(history) == [(0.0, 0.0, True), (2.0, 0.0, True), (3.0, 0.0, False), (4.0, 0.0, False)]
+    assert mower_module._history({"segments": "nope", "buffer": 5}) == []
+
+
+def test_the_position_counts_while_it_comes() -> None:
+    mower = _mower()
+    send(mower, "robot_state/json", ROBOT_STATE)
+    assert mower.live_position is None
+    assert mower.pose["x"] == ROBOT_STATE["pose"]["x"]
+    now = mower_module.time.monotonic()
+    send(mower, "position/json", {"x": 1, "y": 2, "heading": 0.5})
+    assert mower.live_position == {"x": 1.0, "y": 2.0, "heading": 0.5, "blades": False, "job_id": ""}
+    # it stopped coming: robot_state's pose is the newer one then
+    with patch.object(mower_module.time, "monotonic", return_value=now + mower_module.STALE_AFTER + 1):
+        assert mower.live_position is None
+    # a pose that's no object is none
+    send(mower, "robot_state/json", {**ROBOT_STATE, "pose": [1, 2]})
+    assert mower.pose == {}
+
+
+def test_the_area_goes_with_its_job() -> None:
+    mower = _mower()
+    send(mower, "events/json", {"id": "1", "type": "AREA", "area_id": "front", "area_name": "Front", "job_id": "j1"})
+    send(mower, "position/json", {"x": 1, "y": 1, "attributes": {"job_id": "j1"}})
+    assert (mower.area, mower.area_id) == ("Front", "front")
+    # the next job's AREA event got lost: it isn't on the last job's area
+    send(mower, "position/json", {"x": 1, "y": 1, "attributes": {"job_id": "j2"}})
+    assert (mower.area, mower.area_id) == (None, None)
+    send(mower, "events/json", {"id": "2", "type": "AREA", "area_id": "back", "area_name": "Back", "job_id": "j2"})
+    assert mower.area_id == "back"
+    # and not after it stopped mowing
+    send(mower, "events/json", {"id": "3", "type": "STATE", "state": "DOCKING"})
+    assert (mower.area, mower.area_id) == (None, None)
+
+
+async def test_rpc_error_says_what_the_mower_said() -> None:
+    mower = _mower()
+    mower._client = SimpleNamespace(publish=AsyncMock())
+    task = asyncio.create_task(mower.async_rpc("planner.plan", {"area_id": "front"}))
+    await asyncio.sleep(0)
+    request = json.loads(mower._client.publish.await_args.args[1])
+    error = {"code": -32000, "message": "the body doesn't fit", "data": {"code": "BODY_OUT"}}
+    send(mower, "rpc/response", {"id": request["id"], "error": error})
+    with pytest.raises(mower_module.RpcError) as err:
+        await task
+    assert (err.value.code, err.value.data, str(err.value)) == (-32000, {"code": "BODY_OUT"}, "the body doesn't fit")
 
 
 async def test_action_needs_a_connection() -> None:

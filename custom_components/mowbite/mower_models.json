@@ -1,0 +1,53 @@
+{
+  "source": "MowBite v1.4.0-beta.10",
+  "models": [
+    {
+      "key": "yf-nx",
+      "label": "YardForce NX60 / NX80 / NX100",
+      "sizes": {
+        "width": 0.41,
+        "front": 0.43,
+        "rear": 0.18,
+        "blade": 0.18,
+        "bladeAhead": 0.185,
+        "bladeOffset": 0
+      }
+    },
+    {
+      "key": "yf-classic500",
+      "label": "YardForce Classic 500B",
+      "sizes": {
+        "width": 0.425,
+        "front": 0.47,
+        "rear": 0.1,
+        "blade": 0.18,
+        "bladeAhead": 0.18,
+        "bladeOffset": 0
+      }
+    },
+    {
+      "key": "jd-tango-e5",
+      "label": "John Deere Tango E5 / SABO MOWiT 500F",
+      "sizes": {
+        "width": 0.505,
+        "front": 0.6,
+        "rear": 0.21,
+        "blade": 0.3,
+        "bladeAhead": 0.225,
+        "bladeOffset": 0
+      }
+    },
+    {
+      "key": "airseekers-tron",
+      "label": "Airseekers Tron",
+      "sizes": {
+        "width": 0.47,
+        "front": 0.54,
+        "rear": 0.178,
+        "blade": 0.22,
+        "bladeAhead": 0.16,
+        "bladeOffset": 0
+      }
+    }
+  ]
+}

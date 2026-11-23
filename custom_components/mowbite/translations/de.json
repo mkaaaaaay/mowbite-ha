@@ -324,6 +324,9 @@
           "gone": "Startzeit geändert oder entfernt",
           "no_area": "Keine Fläche mehr zu mähen",
           "hold": "Update lief noch",
+          "clock": "Uhrzeit unsicher",
+          "not_docked": "Nicht im Dock",
+          "missed": "Startzeit verpasst",
           "other": "Anderer Grund"
         },
         "state_attributes": {
@@ -483,7 +486,6 @@
     "mower": {
       "options": {
         "none": "Keine",
-        "yf_nx": "YardForce NX60 / NX80 / NX100",
         "custom": "Eigene Maße"
       }
     }

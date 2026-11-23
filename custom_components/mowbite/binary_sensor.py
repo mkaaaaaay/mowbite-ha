@@ -18,6 +18,7 @@ from . import MowbiteConfigEntry
 from .app import AppStatus, part_hours_left
 from .entity import MowbiteEntity, async_add_when_there
 from .features import APP
+from .mower import finite_number
 
 PARALLEL_UPDATES = 0
 
@@ -30,9 +31,10 @@ class MowbiteBinarySensorDescription(BinarySensorEntityDescription):
 
 
 def _gps_fix(state: dict) -> bool | None:
-    accuracy = (state.get("pose") or {}).get("pos_accuracy")
+    pose = state.get("pose")
+    accuracy = finite_number(pose.get("pos_accuracy")) if isinstance(pose, dict) else None
     # 999 and more is no fix at all: the gps is off while the mower stands, or it lost it
-    return accuracy < 999 if isinstance(accuracy, (int, float)) else None
+    return accuracy < 999 if accuracy is not None else None
 
 
 BINARY_SENSORS = (

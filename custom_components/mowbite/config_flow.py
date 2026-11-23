@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import socket
 from typing import Any
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlowWithReload
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT, CONF_USERNAME
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.selector import (
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
+    SelectOptionDict,
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
@@ -33,6 +36,7 @@ from .const import (
     DOMAIN,
     MAP_MODES,
     MAX_BLADE,
+    MOWER_LABELS,
     MOWER_MODELS,
     SIZE_KEYS,
 )
@@ -61,6 +65,35 @@ def _schema(defaults: dict[str, Any]) -> vol.Schema:
 def _unique_id(data: dict[str, Any]) -> str:
     # one broker can carry several mowers behind different prefixes
     return f"{data[CONF_HOST].strip().lower()}:{data[CONF_PORT]}/{normalize_prefix(data.get(CONF_PREFIX))}"
+
+
+async def _addresses(hass: HomeAssistant, host: str, port: int) -> set[str]:
+    """The addresses a broker's name stands for, none when it can't be looked up."""
+    try:
+        async with asyncio.timeout(5):
+            found = await hass.loop.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except (OSError, TimeoutError):
+        return set()
+    return {info[4][0] for info in found}
+
+
+async def _set_up_already(hass: HomeAssistant, data: dict[str, Any], but: str | None = None) -> bool:
+    """Whether this mower is set up under another name of its broker (its IP here, its host name there): the same
+    port and prefix at the same address. The mower has no id of its own to go by. but: the entry being moved"""
+    others = [
+        entry
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        if entry.entry_id != but
+        and entry.data.get(CONF_PORT) == data[CONF_PORT]
+        and normalize_prefix(entry.data.get(CONF_PREFIX)) == normalize_prefix(data.get(CONF_PREFIX))
+    ]
+    if not others:
+        return False
+    mine = await _addresses(hass, data[CONF_HOST], data[CONF_PORT])
+    for entry in others:
+        if mine & await _addresses(hass, entry.data[CONF_HOST], entry.data[CONF_PORT]):
+            return True
+    return False
 
 
 class MowbiteConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -105,9 +138,14 @@ class MowbiteConfigFlow(ConfigFlow, domain=DOMAIN):
             data = self._clean(user_input)
             await self.async_set_unique_id(_unique_id(data))
             self._abort_if_unique_id_configured()
+            if await _set_up_already(self.hass, data):
+                return self.async_abort(reason="already_configured")
             errors = await self._check(data)
             if not errors:
-                return self.async_create_entry(title=DEFAULT_NAME, data=data)
+                # a second mower is told from the first by its broker, notifications are titled with it
+                first = not self.hass.config_entries.async_entries(DOMAIN)
+                title = DEFAULT_NAME if first else f"{DEFAULT_NAME} ({data[CONF_HOST]})"
+                return self.async_create_entry(title=title, data=data)
         return self.async_show_form(step_id="user", data_schema=_schema(user_input or {}), errors=errors)
 
     async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
@@ -118,6 +156,8 @@ class MowbiteConfigFlow(ConfigFlow, domain=DOMAIN):
             # moving to another broker is what this is for, only not onto a mower that's already set up
             other = self.hass.config_entries.async_entry_for_domain_unique_id(DOMAIN, _unique_id(data))
             if other is not None and other.entry_id != entry.entry_id:
+                return self.async_abort(reason="already_configured")
+            if await _set_up_already(self.hass, data, entry.entry_id):
                 return self.async_abort(reason="already_configured")
             errors = await self._check(data)
             if not errors:
@@ -162,7 +202,12 @@ class MowbiteOptionsFlow(OptionsFlowWithReload):
                     ),
                     vol.Optional(CONF_MOWER, default=current.get(CONF_MOWER, "none")): SelectSelector(
                         SelectSelectorConfig(
-                            options=["none", *MOWER_MODELS, "custom"],
+                            # the models by the names MowBite's table has for them, the two others translated
+                            options=[
+                                SelectOptionDict(value="none", label="none"),
+                                *(SelectOptionDict(value=key, label=label) for key, label in MOWER_LABELS.items()),
+                                SelectOptionDict(value="custom", label="custom"),
+                            ],
                             mode=SelectSelectorMode.DROPDOWN,
                             translation_key="mower",
                         )
