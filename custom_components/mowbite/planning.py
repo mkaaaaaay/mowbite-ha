@@ -650,14 +650,14 @@ class Planning:
             if method is None:
                 return None, None
             asked = (mower.map_version, self._plans_version)
-            refused = None
+            plan = refused = None
             try:
                 # never the poses, they're about a megabyte per area
                 plan = trim_plan(await mower.async_rpc(method, {"area_id": area_id}, PLAN_TIMEOUT))
             except RpcError as err:
                 _LOGGER.debug("%s didn't answer %s for %s: %s", mower.host, method, area_id, err)
                 code = err.data.get("code") if isinstance(err.data, dict) else None
-                plan, refused = None, code if code in FINAL_REFUSALS else None
+                refused = code if code in FINAL_REFUSALS else None
             except (CannotConnect, TimeoutError, aiomqtt.MqttError) as err:
                 _LOGGER.debug("%s didn't answer %s for %s: %s", mower.host, method, area_id, err)
                 return None, None

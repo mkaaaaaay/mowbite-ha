@@ -49,7 +49,7 @@ WITHOUT_APP: dict[str, Any] = {"dashboard": {"map": "always"}}
 
 
 # an answer of the app is read up to this size (bytes), a bigger one counts as none: the biggest it has is its
-# pictures, a few hundred KB
+# pictures, under a megabyte
 ANSWER_MAX = 4_000_000
 
 
@@ -66,7 +66,8 @@ class TooBig(Exception):
 
 
 async def read_text(response: aiohttp.ClientResponse) -> str:
-    """The answer's text read piece by piece, raises TooBig over ANSWER_MAX and UnicodeDecodeError."""
+    """The answer's text read piece by piece, raises TooBig over ANSWER_MAX. A byte that's no text (in a log line,
+    say) doesn't cost the rest"""
     pieces = []
     size = 0
     async for piece in response.content.iter_chunked(65536):
@@ -74,7 +75,7 @@ async def read_text(response: aiohttp.ClientResponse) -> str:
         if size > ANSWER_MAX:
             raise TooBig
         pieces.append(piece)
-    return b"".join(pieces).decode()
+    return b"".join(pieces).decode(errors="replace")
 
 
 def shown_url(url: str | None) -> str:

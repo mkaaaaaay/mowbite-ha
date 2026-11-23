@@ -263,8 +263,13 @@ def _hours_left(part: str) -> Callable[[MowbiteData], Any]:
     return value
 
 
+def _area_names(data: MowbiteData) -> dict[Any, Any]:
+    """The names of the areas to mow by their ids."""
+    return {area.get("id"): (area.get("properties") or {}).get("name") for area in mow_areas(data.mower.map)}
+
+
 def _leftover_areas(data: MowbiteData) -> dict[str, Any]:
-    names = {area.get("id"): (area.get("properties") or {}).get("name") for area in mow_areas(data.mower.map)}
+    names = _area_names(data)
     leftovers = data.planning.leftovers or {"areas": {}}
     areas: dict[str, float] = {}
     for area_id, area in leftovers["areas"].items():
@@ -280,7 +285,7 @@ def _leftover_areas(data: MowbiteData) -> dict[str, Any]:
 def _not_planned(data: MowbiteData) -> dict[str, Any]:
     """The areas the planner can't plan as they are, each with its code for why (body_out, no_plan,
     start_unreachable)."""
-    names = {area.get("id"): (area.get("properties") or {}).get("name") for area in mow_areas(data.mower.map)}
+    names = _area_names(data)
     return {"not_planned": {names.get(area_id) or area_id: code.lower() for area_id, code in data.planning.refused.items()}}
 
 
