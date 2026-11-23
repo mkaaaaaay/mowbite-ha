@@ -55,6 +55,18 @@ async def test_switch(hass: HomeAssistant, mower: Mower) -> None:
     assert hass.states.get(SWITCH).state == STATE_ON
 
 
+async def test_a_problem_gets_through_a_snooze(hass: HomeAssistant, mower: Mower) -> None:
+    """The snooze buttons are on every message: one tap on "docked" doesn't hide a failed docking until the morning."""
+    await _press(hass, "button.openmower_pause_notifications_until_tomorrow_morning")
+    send(mower, "events/json", {"id": "1", "type": "DOCKED"})
+    await hass.async_block_till_done()
+    assert hass.states.get(EVENT).attributes["snoozed"] is True
+    _event(mower, "2")
+    await hass.async_block_till_done()
+    assert hass.states.get(EVENT).attributes["severity"] == "error"
+    assert hass.states.get(EVENT).attributes["snoozed"] is False
+
+
 async def test_snooze_ends_by_itself(hass: HomeAssistant, freezer: FrozenDateTimeFactory, mower: Mower) -> None:
     freezer.move_to("2026-10-05 11:00:00+00:00")
     await _press(hass, "button.openmower_pause_notifications_for_1_h")

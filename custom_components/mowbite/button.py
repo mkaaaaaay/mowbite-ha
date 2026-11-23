@@ -91,13 +91,18 @@ class MowbiteAppButtonDescription(ButtonEntityDescription):
     entity_registry_enabled_default: bool = False
 
 
-async def _skip_today(status: AppStatus) -> None:
+def _pause_today(schedule: dict[str, Any]) -> dict[str, str | None]:
+    """The schedule's pause line for not mowing today, from the schedule as the app has it now."""
     today = dt_util.now().date().isoformat()
-    pause = (status.schedule or {}).get("pause")
-    # a pause of all of it through today already is enough, one of some areas becomes one of all of today
-    if pause and pause["areas"] == "all" and pause["until"] >= today:
-        return
-    await status.async_schedule_set({"pause": f"{today} all"})
+    pause = schedule.get("pause")
+    if pause and pause["until"] >= today:
+        # a pause of all of it through today already is enough
+        if pause["areas"] == "all":
+            return {}
+        # there's one pause line: a pause of some areas beyond today would be gone tomorrow
+        if pause["until"] > today:
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="longer_pause")
+    return {"pause": f"{today} all"}
 
 
 APP_BUTTONS = (
@@ -116,7 +121,7 @@ APP_BUTTONS = (
     MowbiteAppButtonDescription(
         key="skip_today",
         translation_key="skip_today",
-        press_fn=_skip_today,
+        press_fn=lambda status: status.async_schedule_change(_pause_today),
         feature=APP + "schedule",
     ),
     MowbiteAppButtonDescription(

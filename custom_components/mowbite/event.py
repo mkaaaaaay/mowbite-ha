@@ -11,7 +11,7 @@ from homeassistant.helpers.event import async_call_later
 
 from . import MowbiteConfigEntry
 from .entity import MowbiteEntity
-from .events import EVENT_TYPES, EventReader, Texts
+from .events import EVENT_TYPES, SEVERITY_ERROR, EventReader, Texts
 from .snooze import ACTION_SNOOZE_HOUR, ACTION_SNOOZE_MORNING
 
 PARALLEL_UPDATES = 0
@@ -55,6 +55,9 @@ class MowbiteEvent(MowbiteEntity, EventEntity):
         await super().async_added_to_hass()
         self.async_on_remove(self.mower.add_event_listener(self._event))
         self.async_on_remove(self._drop_all)
+        # an emergency stop that was on before this listened: nobody was told
+        if self.mower.emergency_event is not None:
+            self._event(self.mower.emergency_event)
 
     @callback
     def _event(self, event: dict[str, Any]) -> None:
@@ -74,8 +77,11 @@ class MowbiteEvent(MowbiteEntity, EventEntity):
             self._drop("emergency")
             return
         # whether notifications are paused, and the buttons a notification can offer to pause them (the app
-        # fires mobile_app_notification_action with that action when one is pressed)
-        attributes["snoozed"] = not self.snooze.active
+        # fires mobile_app_notification_action with that action when one is pressed). a pause for a while is for a
+        # job's news, a problem still gets through: the buttons are on every message, one tap on "docked" would hide
+        # an emergency stop until the morning. switched off, nothing goes out
+        problem = attributes["severity"] == SEVERITY_ERROR
+        attributes["snoozed"] = self.snooze.off or (self.snooze.until is not None and not problem)
         attributes["notification_actions"] = [
             {"action": ACTION_SNOOZE_HOUR + self._entry_id, "title": texts("snooze_hour")},
             {"action": ACTION_SNOOZE_MORNING + self._entry_id, "title": texts("snooze_morning")},

@@ -268,6 +268,41 @@ async def test_emergency_stop(hass: HomeAssistant, mower: Mower) -> None:
     assert fired == ["emergency", "emergency_cleared"]
 
 
+async def test_emergency_stop_with_its_reason(hass: HomeAssistant, mower: Mower) -> None:
+    fired = _fired(hass)
+    send(mower, "robot_state/json", {**ROBOT_STATE, "emergency": 1})
+    # mower_logic says why a moment later
+    send(mower, "events/json", {"id": "1", "type": "EMERGENCY", "emergency": True, "reason": "4"})
+    await hass.async_block_till_done()
+    assert fired == []
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=11))
+    await hass.async_block_till_done()
+    assert fired == ["emergency"]
+    state = hass.states.get("event.openmower_events")
+    assert state.attributes["message"] == "Emergency stop (code 4)"
+    assert state.attributes["reason"] == "4"
+    assert hass.states.get("sensor.openmower_last_problem").state == "Emergency stop (code 4)"
+
+
+async def test_emergency_stop_on_before_home_assistant(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    """The stop was on when the first robot_state came, before the event entity listened: told once all the same."""
+
+    async def run(self: Mower) -> None:
+        self._connected = True
+        send(self, "robot_state/json", {**ROBOT_STATE, "emergency": 1})
+
+    fired = _fired(hass)
+    with patch.object(Mower, "run", run):
+        entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    assert entry.runtime_data.mower.emergency_event is not None
+    assert fired == []
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=11))
+    await hass.async_block_till_done()
+    assert fired == ["emergency"]
+
+
 async def test_short_emergency_stop_is_no_message(hass: HomeAssistant, mower: Mower) -> None:
     fired = _fired(hass)
     send(mower, "robot_state/json", {**ROBOT_STATE, "emergency": 1})

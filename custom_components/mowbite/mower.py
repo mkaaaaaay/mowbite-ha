@@ -63,6 +63,9 @@ _AUTH_CODES = {4, 5, 134, 135}
 
 RPC_TIMEOUT = 20
 
+# mower_logic says why it stopped on events/json, a moment before or after robot_state shows the stop (s)
+EMERGENCY_REASON_WITHIN = 5
+
 
 class CannotConnect(Exception):
     """The broker can't be reached."""
@@ -290,6 +293,11 @@ class Mower:
         self._change_listeners: list[Callable[[], None]] = []
         # the same event twice (a second subscription, a broker resending) would be a second push
         self._seen: deque[str] = deque(maxlen=200)
+        # the emergency stop that's on as listeners were told, None without one, and when (monotonic)
+        self.emergency_event: dict[str, Any] | None = None
+        self._emergency_at = 0.0
+        # the reason mower_logic gave for a stop robot_state hasn't shown yet, and when (monotonic)
+        self._emergency_reason: tuple[str, float] | None = None
 
     @property
     def connected(self) -> bool:
@@ -466,10 +474,11 @@ class Mower:
             self._state_at = time.monotonic()
             self.state_time = time.time()
             # an emergency stop comes as an EMERGENCY event only for mower_logic's own reasons, the stop button, a
-            # lift or a bumper only show in robot_state. so robot_state is where an emergency starts and ends
-            if before is not None and bool(before.get("emergency")) != bool(data.get("emergency")):
-                self._event({"type": "EMERGENCY", "emergency": bool(data.get("emergency")), "t": self.state_time,
-                             "source": "robot_state"})
+            # lift or a bumper only show in robot_state. so robot_state is where an emergency starts and ends. one
+            # that's on when the first robot_state comes is told too, nobody heard of it yet
+            stopped = bool(data.get("emergency"))
+            if stopped != bool((before or {}).get("emergency")):
+                self._emergency(stopped)
             if not self._was_available:
                 self._notify_all()
             else:
@@ -554,11 +563,34 @@ class Mower:
             self.sensors[sensor_id] = _value(payload)
             self._notify(f"sensor:{sensor_id}")
 
+    def _emergency(self, stopped: bool) -> None:
+        """An emergency stop robot_state shows or doesn't show any more, with mower_logic's reason when it gave one."""
+        event: dict[str, Any] = {"type": "EMERGENCY", "emergency": stopped, "t": self.state_time, "source": "robot_state"}
+        told = self._emergency_reason
+        self._emergency_reason = None
+        if stopped and told is not None and time.monotonic() - told[1] < EMERGENCY_REASON_WITHIN:
+            event["reason"] = told[0]
+        self.emergency_event = event if stopped else None
+        self._emergency_at = time.monotonic()
+        self._event(event)
+
     def _event(self, event: dict[str, Any]) -> None:
         if not isinstance(event.get("type"), str):
             return
-        # the ones from events/json would be a second message for the same emergency stop, robot_state tells it
+        # the ones from events/json would be a second message for the same emergency stop, robot_state tells it. their
+        # reason is kept for it
         if event["type"] == "EMERGENCY" and event.get("source") != "robot_state":
+            reason = event.get("reason")
+            if not event.get("emergency") or not isinstance(reason, str) or not reason:
+                return
+            now = time.monotonic()
+            told = self.emergency_event
+            if told is not None and "reason" not in told and now - self._emergency_at < EMERGENCY_REASON_WITHIN:
+                # the stop was told a moment ago without it: once more with it, it's still held back
+                self.emergency_event = {**told, "reason": reason}
+                self._event(self.emergency_event)
+            elif told is None:
+                self._emergency_reason = (reason, now)
             return
         event_id = event.get("id")
         if isinstance(event_id, str):

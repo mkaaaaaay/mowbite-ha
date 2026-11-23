@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -226,6 +227,12 @@ def parse_schedule(text: str) -> dict[str, Any]:
     return out
 
 
+def is_schedule(text: str) -> bool:
+    """Whether a text is the app's schedule: the app always writes whether it's on. An empty answer or another page
+    isn't one, written back it would be a schedule without its plans"""
+    return any(words[0] == "enabled" and len(words) >= 2 for words in _lines(text))
+
+
 def _hhmm(text: str) -> bool:
     match = re.fullmatch(r"(\d{1,2}):(\d{2})", text)
     return match is not None and int(match[1]) < 24 and int(match[2]) < 60
@@ -402,6 +409,8 @@ class AppStatus:
         self.stats: dict[str, Any] | None = None
         self._round = 0
         self._listeners: list[Callable[[], None]] = []
+        # the schedule is read, changed and saved as a whole, one change at a time
+        self._schedule_lock = asyncio.Lock()
 
     def add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
         self._listeners.append(listener)
@@ -467,15 +476,25 @@ class AppStatus:
     async def async_schedule_set(self, lines: dict[str, str | None]) -> None:
         """Sets some of the schedule's lines by their first word (None takes it out), all the others as the app
         has them: the schedule is saved as a whole. Raises AppRefused."""
-        text = await self._get(SCHEDULE_PATH) if self._url else None
-        if text is None:
-            raise AppRefused
-        kept = [line for line in text.splitlines() if line.strip() and line.split()[0] not in lines]
-        new = kept + [f"{key} {value}" for key, value in lines.items() if value is not None]
-        answer = await self._post(SCHEDULE_PATH, "\n".join(new) + "\n")
-        if answer is None:
-            raise AppRefused
-        self.schedule = parse_schedule(answer)
+        await self.async_schedule_change(lambda schedule: lines)
+
+    async def async_schedule_change(self, change: Callable[[dict[str, Any]], dict[str, str | None]]) -> None:
+        """Like async_schedule_set, with the lines worked out from the schedule as the app has it right now (not as
+        it was read minutes ago), nothing saved when there are none. One change at a time: two at once would each
+        save the schedule without the other's line. Raises AppRefused."""
+        async with self._schedule_lock:
+            text = await self._get(SCHEDULE_PATH) if self._url else None
+            if text is None or not is_schedule(text):
+                raise AppRefused
+            lines = change(parse_schedule(text))
+            if not lines:
+                return
+            kept = [line for line in text.splitlines() if line.strip() and line.split()[0] not in lines]
+            new = kept + [f"{key} {value}" for key, value in lines.items() if value is not None]
+            answer = await self._post(SCHEDULE_PATH, "\n".join(new) + "\n")
+            if answer is None or not is_schedule(answer):
+                raise AppRefused
+            self.schedule = parse_schedule(answer)
         self._changed()
 
     async def async_art(self) -> tuple[int, str] | None:
@@ -529,7 +548,7 @@ class AppStatus:
             if isinstance(system.get("wifi_signal"), float) and not system.get("remote"):
                 found.append("wifi")
         if n % SCHEDULE_EVERY == 0:
-            if (text := await self._get(SCHEDULE_PATH)) is not None and text.strip():
+            if (text := await self._get(SCHEDULE_PATH)) is not None and is_schedule(text):
                 self.schedule = parse_schedule(text)
                 found.append("schedule")
             if (text := await self._get(SCHEDULE_LOG_PATH)) is not None:

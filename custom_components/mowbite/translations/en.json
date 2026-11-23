@@ -432,6 +432,9 @@
     },
     "emergency_active": {
       "message": "The emergency stop is on, reset it first."
+    },
+    "longer_pause": {
+      "message": "MowBite has a pause for some areas that runs longer than today, skipping today would end it. Change it in MowBite."
     }
   },
   "options": {

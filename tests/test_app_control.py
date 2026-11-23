@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
+from typing import Any
 
 import pytest
 from homeassistant.const import ATTR_ENTITY_ID
@@ -11,7 +13,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
-from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
+from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker, AiohttpClientMockResponse
 
 from custom_components.mowbite.const import CONF_APP_URL
 
@@ -106,3 +108,85 @@ async def test_refused(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker,
         await hass.services.async_call(
             "number", "set_value", {ATTR_ENTITY_ID: "number.openmower_blade_change_every", "value": 80}, blocking=True
         )
+
+
+def live_schedule(aioclient_mock: AiohttpClientMocker, text: str) -> list[str]:
+    """The app's schedule as the file it is: read as it stands, saved by a POST. Returns it, changeable."""
+    kept = [text]
+
+    async def get(method: str, url: Any, data: Any) -> AiohttpClientMockResponse:
+        # the answer takes a moment, another change may come meanwhile
+        answer = kept[0]
+        await asyncio.sleep(0)
+        return AiohttpClientMockResponse(method, url, text=answer)
+
+    async def post(method: str, url: Any, data: Any) -> AiohttpClientMockResponse:
+        kept[0] = data.decode()
+        return AiohttpClientMockResponse(method, url, text=kept[0])
+
+    aioclient_mock.clear_requests()
+    matcher = re.compile(re.escape(URL + "/cgi-bin/schedule") + "$")
+    aioclient_mock.get(matcher, side_effect=get)
+    aioclient_mock.post(matcher, side_effect=post)
+    return kept
+
+
+async def test_two_changes_at_once(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, app: None) -> None:
+    """A scene switches the schedule on and sets the battery level: each is saved on top of the other, not on the
+    schedule as it was before both."""
+    kept = live_schedule(aioclient_mock, SCHEDULE)
+    await asyncio.gather(
+        hass.services.async_call("switch", "turn_on", {ATTR_ENTITY_ID: "switch.openmower_mow_on_schedule"}, blocking=True),
+        hass.services.async_call(
+            "number", "set_value", {ATTR_ENTITY_ID: "number.openmower_start_from_battery_level", "value": 40}, blocking=True
+        ),
+        hass.services.async_call("switch", "turn_off", {ATTR_ENTITY_ID: "switch.openmower_skip_when_it_rains"}, blocking=True),
+    )
+    expected = SCHEDULE.replace("enabled 0", "enabled 1").replace("minbattery 60", "minbattery 40").replace("skiprain 1", "skiprain 0")
+    assert sorted(kept[0].splitlines()) == sorted(expected.splitlines())
+    assert hass.states.get("switch.openmower_mow_on_schedule").state == "on"
+    assert hass.states.get("number.openmower_start_from_battery_level").state == "40"
+
+
+@pytest.mark.parametrize("answer", ["", "\n", "<html><body>login</body></html>"])
+async def test_no_schedule_read_nothing_saved(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, app: None, answer: str
+) -> None:
+    """An empty answer or another page isn't the schedule: saved with the one changed line, the plans would be gone."""
+    kept = live_schedule(aioclient_mock, answer)
+    with pytest.raises(HomeAssistantError) as err:
+        await hass.services.async_call("switch", "turn_on", {ATTR_ENTITY_ID: "switch.openmower_mow_on_schedule"}, blocking=True)
+    assert err.value.translation_key == "app_refused"
+    assert kept[0] == answer
+    assert posted(aioclient_mock, "/cgi-bin/schedule") == []
+    assert hass.states.get("switch.openmower_mow_on_schedule").state == "off"
+
+
+async def test_skip_today_goes_by_the_schedule_as_it_is_now(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, app: None
+) -> None:
+    """Home Assistant read the schedule minutes ago, a pause set in the app since then isn't in what it knows."""
+    today = dt_util.now().date().isoformat()
+
+    async def skip() -> None:
+        await hass.services.async_call("button", "press", {ATTR_ENTITY_ID: "button.openmower_skip_today"}, blocking=True)
+
+    # paused until long after today: nothing to do, and not cut back to today
+    kept = live_schedule(aioclient_mock, SCHEDULE + "pause 2099-01-01 all\n")
+    await skip()
+    assert posted(aioclient_mock, "/cgi-bin/schedule") == []
+    assert "pause 2099-01-01 all" in kept[0].splitlines()
+
+    # some areas paused beyond today: the one pause line can't say both, it stays
+    kept = live_schedule(aioclient_mock, SCHEDULE + "pause 2099-01-01 front\n")
+    with pytest.raises(HomeAssistantError) as err:
+        await skip()
+    assert err.value.translation_key == "longer_pause"
+    assert posted(aioclient_mock, "/cgi-bin/schedule") == []
+    assert "pause 2099-01-01 front" in kept[0].splitlines()
+
+    # some areas paused through today only: all of today covers it
+    kept = live_schedule(aioclient_mock, SCHEDULE + f"pause {today} front\n")
+    await skip()
+    assert [line for line in kept[0].splitlines() if line.startswith("pause")] == [f"pause {today} all"]
+    assert "plan 1,3,5 10:00 front" in kept[0].splitlines()

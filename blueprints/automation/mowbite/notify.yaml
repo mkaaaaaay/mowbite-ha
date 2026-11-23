@@ -79,7 +79,8 @@ blueprint:
       name: Snooze buttons
       description: >-
         Adds "1 h" and "until tomorrow morning" to each notification. Pressing one pauses the mower's
-        notifications, the integration's "Notifications" switch shows it and turns them back on.
+        notifications, the integration's "Notifications" switch shows it and turns them back on. Problems
+        (an emergency stop, docking failed) still come during such a pause, not with the switch off.
       default: true
       selector:
         boolean:
@@ -123,4 +124,5 @@ actions:
       push:
         interruption-level: "{{ 'time-sensitive' if trigger.to_state.attributes.severity == 'error' else 'active' }}"
       priority: "{{ 'high' if trigger.to_state.attributes.severity == 'error' else 'normal' }}"
-      ttl: "{{ 0 if trigger.to_state.attributes.severity == 'error' else 3600 }}"
+      # a problem is kept for a day for a phone that's offline, with 0 it would be dropped right away
+      ttl: "{{ 86400 if trigger.to_state.attributes.severity == 'error' else 3600 }}"

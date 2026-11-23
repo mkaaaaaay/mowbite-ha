@@ -131,15 +131,52 @@ def test_events_once_each() -> None:
 def test_emergency_comes_from_robot_state() -> None:
     mower = _mower()
     seen = []
-    mower.add_event_listener(lambda event: seen.append((event["type"], event.get("emergency"))))
-    # the first robot_state is how things are, not a change
+    mower.add_event_listener(lambda event: seen.append((event["type"], event.get("emergency"), event.get("reason"))))
+    # no stop in the first robot_state is nothing to tell
+    send(mower, "robot_state/json", ROBOT_STATE)
+    assert seen == []
     send(mower, "robot_state/json", {**ROBOT_STATE, "emergency": 1})
-    # mower_logic's own EMERGENCY event would be a second message for the same stop
-    send(mower, "events/json", {"id": "a", "type": "EMERGENCY", "emergency": True, "reason": "4"})
     send(mower, "robot_state/json", {**ROBOT_STATE, "emergency": 1})
     send(mower, "robot_state/json", {**ROBOT_STATE, "emergency": 0})
+    assert seen == [("EMERGENCY", True, None), ("EMERGENCY", False, None)]
+    assert mower.emergency_event is None
+
+
+def test_emergency_on_at_the_first_robot_state() -> None:
+    """Home Assistant started while the stop was on: told once, nobody heard of it yet."""
+    mower = _mower()
+    seen = []
+    mower.add_event_listener(lambda event: seen.append((event["type"], event.get("emergency"))))
     send(mower, "robot_state/json", {**ROBOT_STATE, "emergency": 1})
-    assert seen == [("EMERGENCY", False), ("EMERGENCY", True)]
+    send(mower, "robot_state/json", {**ROBOT_STATE, "emergency": 1})
+    assert seen == [("EMERGENCY", True)]
+    assert mower.emergency_event is not None
+
+
+def test_emergency_with_mower_logics_reason() -> None:
+    """mower_logic's own EMERGENCY event isn't a second message, its reason goes with the stop robot_state shows."""
+    mower = _mower()
+    seen = []
+    mower.add_event_listener(lambda event: seen.append((event.get("emergency"), event.get("reason"))))
+    send(mower, "robot_state/json", ROBOT_STATE)
+    # the reason first, as it mostly comes
+    send(mower, "events/json", {"id": "a", "type": "EMERGENCY", "emergency": True, "reason": "4"})
+    assert seen == []
+    send(mower, "robot_state/json", {**ROBOT_STATE, "emergency": 1})
+    assert seen == [(True, "4")]
+    send(mower, "robot_state/json", ROBOT_STATE)
+    # the stop first: told again with the reason, once
+    send(mower, "robot_state/json", {**ROBOT_STATE, "emergency": 1})
+    send(mower, "events/json", {"id": "b", "type": "EMERGENCY", "emergency": True, "reason": "8"})
+    send(mower, "events/json", {"id": "c", "type": "EMERGENCY", "emergency": True, "reason": "8"})
+    assert seen[2:] == [(True, None), (True, "8")]
+    send(mower, "robot_state/json", ROBOT_STATE)
+    # a reason from long before isn't this stop's
+    now = mower_module.time.monotonic()
+    send(mower, "events/json", {"id": "d", "type": "EMERGENCY", "emergency": True, "reason": "2"})
+    with patch.object(mower_module.time, "monotonic", return_value=now + mower_module.EMERGENCY_REASON_WITHIN + 1):
+        send(mower, "robot_state/json", {**ROBOT_STATE, "emergency": 1})
+    assert seen[-1] == (True, None)
 
 
 def test_goes_stale_without_robot_state() -> None:

@@ -50,7 +50,8 @@ mower's MQTT broker directly, no cloud and no extra add-on.
   navigation error, mow motor didn't start, GPS lost while mowing, emergency stop and cleared, fully charged,
   job dropped, mower started, shut down. Each comes with a message in Home Assistant's language.
 - **Push notifications** with the blueprint below: pick your phone and the events, every message has buttons to
-  snooze for an hour or until the next morning. A switch pauses them as long as you like.
+  snooze for an hour or until the next morning, problems (an emergency stop, docking failed) still come then. A
+  switch pauses all of them as long as you like.
 - **The MowBite card**: the mower like on MowBite's dashboard, its status, the buttons and the map with the
   areas, obstacles, the docking station, the mower and its track. On wide screens side by side, on phones one
   below the other. It comes with the integration, no resource to add.
@@ -71,7 +72,8 @@ What it reads is what OpenMower publishes on MQTT: `robot_state`, `actions`, `se
 `position` and `map`, and over the mower's rpc its plans and event history, asked when something changes (an area
 starts, the mower docks, the map changes), never polled. The track of a job that was already running when Home
 Assistant started comes from the mower's position history (OpenMower 1.3 and newer). An emergency stop is told
-once it has lasted 10 seconds, like MowBite's own notifications do it, and a navigation error only when the mower
+once it has lasted 10 seconds, like MowBite's own notifications do it (also one that is on when Home Assistant
+starts), and a navigation error only when the mower
 doesn't head home right after it (OpenMower reports one when it's sent home in the middle of a path).
 
 ### Which OpenMower

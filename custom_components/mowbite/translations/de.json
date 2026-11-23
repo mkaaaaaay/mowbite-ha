@@ -432,6 +432,9 @@
     },
     "emergency_active": {
       "message": "Der Notaus ist aktiv, erst zurücksetzen."
+    },
+    "longer_pause": {
+      "message": "In MowBite sind einige Flächen länger als heute pausiert, „Heute nicht mähen“ würde diese Pause beenden. Bitte in MowBite ändern."
     }
   },
   "options": {

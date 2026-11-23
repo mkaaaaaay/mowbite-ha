@@ -433,7 +433,8 @@ class Planning:
             return
         t = event.get("t")
         when = dt_util.utc_from_timestamp(t) if isinstance(t, (int, float)) else dt_util.utcnow()
-        if self.problem is not None and self.problem["time"] >= when:
+        # the same time again is the same problem told once more, with more to it (an emergency stop's reason)
+        if self.problem is not None and self.problem["time"] > when:
             return
         self.problem = {
             "time": when,
